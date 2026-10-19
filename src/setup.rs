@@ -14,6 +14,8 @@ use std::{
     process::Command,
 };
 
+mod zcode;
+
 /// The service's name. A non-default `REASON_NETWORK_HOME` gets its own, so a second instance (or a test) can never
 /// replace the real one.
 fn service_name() -> String {
@@ -1202,7 +1204,7 @@ fn me(exe: &Path) -> String {
     s[1..s.len() - 1].to_string()
 }
 
-const AGENTS: [Agent; 10] = [
+const AGENTS: [Agent; 11] = [
     Agent {
         id: "claude",
         name: "Claude Code",
@@ -1249,6 +1251,14 @@ const AGENTS: [Agent; 10] = [
         installed: || home().join(".cursor").exists() || agent::find_bin("cursor-agent").is_some(),
         wired: |exe| has(home().join(".cursor/mcp.json"), &me(exe)),
         apply: cursor,
+    },
+    Agent {
+        id: "zcode",
+        name: "ZCode Desktop",
+        hint: "sees messages when it checks its inbox; reload MCP after setup",
+        installed: zcode::installed,
+        wired: zcode::wired,
+        apply: zcode::apply,
     },
     Agent {
         id: "gemini",
@@ -1404,7 +1414,7 @@ pub async fn run(dry: bool, remove: bool, no_service: bool) -> Result<()> {
     println!("{verb} ({}):", crate::util::tilde(&exe.display().to_string()));
     if found.is_empty() && !remove {
         println!(
-            "  no supported agents found (Claude Code, Codex, Grok CLI, Cursor, Gemini CLI, Copilot CLI, opencode, pi, DeepSeek Harness, Reason)"
+            "  no supported agents found (Claude Code, Codex, Grok CLI, Cursor, ZCode Desktop, Gemini CLI, Copilot CLI, opencode, pi, DeepSeek Harness, Reason)"
         );
     }
     let ids: Vec<&str> = found.iter().map(|f| f.id).collect();
