@@ -10,7 +10,7 @@ One small daemon per computer. Messages land straight in the session that's open
 
 Every coding agent session on every teammate's computer shows up (who, which repo and branch, busy or idle, what it's
 doing right now), and any of them can message the right one: Claude Code, Codex, Cursor, Gemini CLI, Copilot CLI,
-Grok CLI, opencode, pi, DeepSeek Harness and Reason.
+Grok CLI, ZCode Desktop, opencode, pi, DeepSeek Harness and Reason.
 
 ## Get started
 
@@ -51,7 +51,7 @@ That's it. Ask any agent "who's on the network?", tell it to ask someone's agent
   `check_inbox` where messages can't be pushed, under the MCP server `reason-network`. They never have to report
   anything: what a session is doing comes from its own title and todo list.
 - **Messages land right away.** Claude Code, Codex, opencode, pi and Reason get them mid-session, and idle ones wake
-  up; Cursor, Gemini, Copilot and Grok at their next step; DeepSeek Harness when it checks its inbox (every tool
+  up; Cursor, Gemini, Copilot and Grok at their next step; DeepSeek Harness and ZCode when they check their inbox (every tool
   result says if mail is waiting). Claude sessions you already had open join without a restart.
 - **Small text files go along.** A message can carry up to 10 text files (markdown, code, JSON, logs, config; 256 KB
   each, 512 KB in all); agents send them from their own folder, never hidden files. The recipient's engine saves copies
@@ -78,6 +78,16 @@ reason-network folder ~/personal off                           # sessions in ~/p
 
 With the Reason CLI, `reason network who` and `reason network send` work too, and
 `reason network alice/api-claude "…"` asks and waits for the answer.
+
+**ZCode Desktop:** `setup` adds a stdio MCP server; reload MCP or start a new ZCode session to load it.
+Messages arrive through `check_inbox`; no ZCode hooks are installed. Following
+[ZCode's configuration rules](https://zcode.z.ai/cn/docs/mcp-services), setup uses user-level
+`~/.zcode/cli/config.json` (`mcp.servers`), or edits `~/.agents/mcp.json` (`mcpServers`) when that fallback is active.
+This keeps existing fallback servers visible: any native MCP server would hide that entire fallback file.
+Workspace sources (`.zcode/config.json`, otherwise `.agents/mcp.json`) remain untouched; ZCode loads both scopes,
+with user servers winning name conflicts. Setup refuses a conflicting `reason-network` in the current workspace
+or the active user source, and `setup --remove` removes only entries marked and wired by this integration.
+Provider and model settings are preserved. Existing files are backed up as `<file>.bak-reason` before editing.
 
 ## How it works
 

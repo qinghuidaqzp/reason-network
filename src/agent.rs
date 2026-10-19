@@ -59,6 +59,8 @@ pub fn from_client_name(name: &str) -> Option<&'static str> {
     } else if n == "dsh" || n.starts_with("dsh-") {
         // DeepSeek Harness: its MCP client says `dsh-mcp-client`.
         "dsh"
+    } else if n == "zcode" || n.starts_with("zcode-") || n.starts_with("zcode ") {
+        "zcode"
     } else if has("reason") {
         "reason"
     } else if n == "amp" || n.starts_with("amp-") || n.starts_with("amp ") {
@@ -255,6 +257,9 @@ mod tests {
         assert_eq!(from_client_name("grok-shell-reason-network"), Some("grok"));
         assert_eq!(from_client_name("dsh-mcp-client"), Some("dsh"));
         assert_eq!(from_client_name("ashdsh"), None);
+        assert_eq!(from_client_name("ZCode"), Some("zcode"));
+        assert_eq!(from_client_name("zcode-mcp-client"), Some("zcode"));
+        assert_eq!(from_client_name("not-zcode"), None);
         assert_eq!(from_client_name("claude-ai"), Some("claude-desktop"));
         assert_eq!(from_client_name("example-client"), None);
     }
