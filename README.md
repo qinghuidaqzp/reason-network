@@ -38,7 +38,7 @@ trust the new hooks.
   `check_inbox` where messages can't be pushed, under the MCP server `reason-network`. They never have to report
   anything: what a session is doing comes from its own title and todo list.
 - **Messages land right away.** Claude Code, Codex, opencode, pi and Reason get them mid-session, and idle ones wake
-  up; Cursor, Gemini, Copilot and Grok at their next step; DeepSeek Harness and ZCode when they check their inbox (every tool
+  up; Cursor, Gemini, Copilot, Grok and ZCode at their next step; DeepSeek Harness when it checks its inbox (every tool
   result says if mail is waiting). Claude sessions you already had open join without a restart.
 - **Your sign-off, even when you're away from your agent.** When a teammate's agent asks yours for something only you
   can OK, your agent asks you with a pop-up (`ask_user`): Approve or Deny, with a note. The answer goes straight back
@@ -61,8 +61,8 @@ reason-network setup                                           # which agents ar
 With the Reason CLI, `reason network who` and `reason network send` work too, and
 `reason network alice/api-claude "…"` asks and waits for the answer.
 
-**ZCode Desktop:** `setup` adds a stdio MCP server; reload MCP or start a new ZCode session to load it.
-Messages arrive through `check_inbox`; no ZCode hooks are installed. Following
+**ZCode Desktop:** `setup` adds a stdio MCP server and user-level SessionStart / PostToolUse hooks.
+Start a new session to load the hooks; ZCode snapshots their configuration at session startup. Following
 [ZCode's configuration rules](https://zcode.z.ai/cn/docs/mcp-services), setup uses user-level
 `~/.zcode/cli/config.json` (`mcp.servers`), or edits `~/.agents/mcp.json` (`mcpServers`) when that fallback is active.
 This keeps existing fallback servers visible: any native MCP server would hide that entire fallback file.
@@ -70,6 +70,19 @@ Workspace sources (`.zcode/config.json`, otherwise `.agents/mcp.json`) remain un
 with user servers winning name conflicts. Setup refuses a conflicting `reason-network` in the current workspace
 or the active user source, and `setup --remove` removes only entries marked and wired by this integration.
 Provider and model settings are preserved. Existing files are backed up as `<file>.bak-reason` before editing.
+
+The [ZCode hooks protocol](https://www.zcode.network/en/docs/hooks/) supports direct process arguments and
+JSON `additionalContext`. Hooks check only an already-running daemon, with a 1.5-second request budget and no
+long polling. SessionStart registers the real session without taking mail; PostToolUse injects pending messages
+after successful tools. User hooks are preserved; setup refuses to enable an existing disabled collection.
+There is no Stop hook or idle wake-up.
+
+Hook stdout is not an acceptance receipt. Messages stay durably unread, with the existing 90-second lease preventing
+concurrent/repeated hooks from injecting them again. A ZCode `send_message` reply with the original id as `reply_to`
+confirms receipt only when both sender and recipient match; explicit `check_inbox` can recover even leased mail.
+ZCode inbox waits are capped at five seconds. Failed or unconfirmed injections can retry after the lease expires
+or the daemon restarts: delivery is at least once, so receivers should use message ids to avoid repeating work.
+Oversized context stays pending for `check_inbox`; hooks never truncate their JSON or mark stdout as read.
 
 ## How it works
 

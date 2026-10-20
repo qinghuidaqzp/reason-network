@@ -199,6 +199,10 @@ impl Daemon {
                     note = format!("{note}; {}", self.notify(&msg).1);
                 }
                 res.recipients.push(Recipient { address: msg.to.clone(), state, note });
+                // A real, correlated ZCode reply proves receipt. Hook stdout alone cannot prove host acceptance.
+                if res.recipients.last().is_some_and(|r| r.state != "refused") {
+                    g.store.ack_zcode_reply(&msg)?;
+                }
             }
         }
         self.arrived.notify_waiters();
@@ -531,7 +535,9 @@ impl Daemon {
                 if g.live.get(&key).is_none_or(|l| l.stop_gen != stop) {
                     return Ok(Inbox { messages: Vec::new(), text: String::new() });
                 }
-                let messages = g.pending(&address)?;
+                // ZCode hooks only lease mail; an explicit inbox read must also recover leased messages immediately.
+                let messages =
+                    if agent.as_deref() == Some("zcode") { g.store.unread(&address)? } else { g.pending(&address)? };
                 if !messages.is_empty() && !peek {
                     let ids: Vec<String> = messages.iter().map(|m| m.id.clone()).collect();
                     g.store.mark_read(&ids, util::now_ms())?;

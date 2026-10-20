@@ -243,6 +243,9 @@ enum Cmd {
         state: Option<String>,
         #[arg(long)]
         doing: Option<String>,
+        /// State directory for a ZCode process hook (which has no environment-variable config field).
+        #[arg(long)]
+        network_home: Option<std::path::PathBuf>,
     },
     /// Run the daemon in the foreground (normally started on demand or by the service)
     Daemon {
@@ -273,13 +276,20 @@ enum Cmd {
 async fn main() -> Result<()> {
     migrate::as_ours();
     let cmd = Cli::parse().cmd;
+    if let Some(Cmd::Hook { agent, event, network_home: Some(home), .. }) = &cmd
+        && agent == "zcode"
+    {
+        // Resolve the explicit hook state before touching the default profile's migration paths.
+        hook::zcode::at_home(event, home.clone()).await;
+        std::process::exit(0)
+    }
     paths::migrate();
     match cmd {
         Some(Cmd::Daemon { service }) => daemon::run(service).await,
         Some(Cmd::Mcp) => mcp::run().await,
         // Blocks this (the main) thread with AppKit's event loop; its daemon calls run on the runtime's workers.
         Some(Cmd::Tray) => tray::run(),
-        Some(Cmd::Hook { agent, event, session, state, doing }) => {
+        Some(Cmd::Hook { agent, event, session, state, doing, .. }) => {
             hook::run(&agent, &event, session, state, doing).await;
             // Don't wait on anything left behind (a stuck stdin read): the agent is waiting on us.
             std::process::exit(0)

@@ -9,7 +9,13 @@ use std::{
     time::Duration,
 };
 
+pub(crate) mod zcode;
+
 pub async fn run(agent_name: &str, event: &str, session: Option<String>, state: Option<String>, doing: Option<String>) {
+    if agent_name == "zcode" {
+        zcode::run(event).await;
+        return;
+    }
     let input = if session.is_none() { read_stdin(Duration::from_secs(3)) } else { String::new() };
     let link = Link::new(None);
     let Ok(Some((out, key, ids))) =
@@ -120,7 +126,7 @@ fn grok_ignores(event: &str, v: &Value) -> bool {
 }
 
 /// The JSON (or text) each agent expects from this hook to put `text` in front of the model.
-fn format_for(agent: &str, event: &str, ev: &str, text: &str) -> String {
+pub(crate) fn format_for(agent: &str, event: &str, ev: &str, text: &str) -> String {
     let specific = |name: &str| json!({ "hookSpecificOutput": { "hookEventName": name, "additionalContext": text } });
     let block = || json!({ "decision": "block", "reason": text });
     let out = match (agent, ev) {
@@ -128,7 +134,8 @@ fn format_for(agent: &str, event: &str, ev: &str, text: &str) -> String {
         ("codex", "start") => specific("SessionStart"),
         ("codex", "prompt") => specific("UserPromptSubmit"),
         ("codex", "tool") => specific("PostToolUse"),
-        ("grok", "tool") => specific("PostToolUse"),
+        ("grok" | "zcode", "tool") => specific("PostToolUse"),
+        ("zcode", "start") => specific("SessionStart"),
         ("gemini", "start") => specific("SessionStart"),
         ("gemini", "prompt") => specific("BeforeAgent"),
         ("gemini", "tool") => specific("AfterTool"),
