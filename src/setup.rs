@@ -1255,7 +1255,7 @@ const AGENTS: [Agent; 11] = [
     Agent {
         id: "zcode",
         name: "ZCode Desktop",
-        hint: "sees messages when it checks its inbox; reload MCP after setup",
+        hint: "after tools while working; start a new session to load hooks; no idle wake-up",
         installed: zcode::installed,
         wired: zcode::wired,
         apply: zcode::apply,

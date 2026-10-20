@@ -198,7 +198,9 @@ impl ReasonNetworkMcp {
             Ok(k) => k,
             Err(e) => return Ok(failure(e)),
         };
-        let req = Request::Inbox { key: key.clone(), wait_secs: a.wait_secs.unwrap_or(0), peek: true };
+        let wait = a.wait_secs.unwrap_or(0);
+        let wait = if self.agent(&ctx.peer, Some(&ctx.meta)) == "zcode" { wait.min(5) } else { wait };
+        let req = Request::Inbox { key: key.clone(), wait_secs: wait, peek: true };
         let got = tokio::select! {
             r = self.link.call::<Inbox>(req) => r,
             _ = ctx.ct.cancelled() => Ok(Inbox { messages: Vec::new(), text: String::new() }),
@@ -271,6 +273,12 @@ impl ReasonNetworkMcp {
 
     async fn session_for(&self, ctx: &RequestContext<RoleServer>) -> Result<String> {
         let agent = self.agent(&ctx.peer, Some(&ctx.meta));
+        if agent == "zcode" {
+            // Never guess between two conversations sharing a workspace or inherit another agent's session id.
+            let (id, cwd) = agent::zcode_context(&ctx.meta)
+                .ok_or_else(|| anyhow::anyhow!("ZCode MCP call is missing session_id/workspace_path metadata"))?;
+            return self.register_session(agent, Some(id), cwd).await;
+        }
         self.session(agent, agent::meta_session_id(&ctx.meta)).await
     }
 
@@ -284,6 +292,10 @@ impl ReasonNetworkMcp {
             return Ok(key);
         }
         let id = meta_id.or_else(|| agent::env_session_id(agent));
+        self.register_session(agent, id, agent::cwd()).await
+    }
+
+    async fn register_session(&self, agent: &'static str, id: Option<String>, cwd: String) -> Result<String> {
         let key = match &id {
             Some(id) => format!("{agent}:{id}"),
             None => format!("proc:{}", std::process::id()),
@@ -295,7 +307,7 @@ impl ReasonNetworkMcp {
         let reg = SessionReg {
             key: key.clone(),
             agent: agent.to_string(),
-            cwd: agent::cwd(),
+            cwd,
             agent_session_id: id,
             pid: Some(agent::agent_pid()),
             tier,

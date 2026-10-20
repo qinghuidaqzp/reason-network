@@ -112,6 +112,20 @@ impl Store {
         Ok(self.db.query_row("SELECT 1 FROM messages WHERE id = ?1", [id], |_| Ok(())).optional()?.is_some())
     }
 
+    /// Confirmation of receipt only: a ZCode reply must correlate to mail sent to this exact session by its target.
+    pub fn ack_zcode_reply(&self, reply: &Message) -> Result<()> {
+        if reply.from_agent.as_deref() != Some("zcode") {
+            return Ok(());
+        }
+        if let Some(id) = &reply.reply_to {
+            self.db.execute(
+                "UPDATE messages SET read_at = ?1 WHERE id = ?2 AND recipient = ?3 AND sender = ?4 AND held = 0",
+                params![crate::util::now_ms(), id, reply.from, reply.to],
+            )?;
+        }
+        Ok(())
+    }
+
     pub fn unread(&self, recipient: &str) -> Result<Vec<Message>> {
         let mut st = self.db.prepare_cached(&format!(
             "SELECT {MESSAGE_COLS} FROM messages WHERE recipient = ?1 AND read_at IS NULL AND held = 0 ORDER BY sent_at, id"
@@ -293,6 +307,51 @@ fn remembered(r: &Row) -> rusqlite::Result<Remembered> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_correlated_zcode_reply_confirms_receipt_and_never_held_mail() {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let original = Message {
+            id: "incoming".into(),
+            from: "alice/codex".into(),
+            to: "bob/zcode".into(),
+            from_agent: Some("codex".into()),
+            from_repo: None,
+            via: None,
+            reply_to: None,
+            body: "你好".into(),
+            wake: true,
+            notify: false,
+            sent_at: 0,
+            approval: None,
+        };
+        store.insert(&original, false).unwrap();
+        let reply = Message {
+            id: "reply".into(),
+            from: original.to.clone(),
+            to: original.from.clone(),
+            from_agent: Some("zcode".into()),
+            reply_to: Some(original.id.clone()),
+            ..original.clone()
+        };
+        for bad in [
+            Message { from: "bob/other-session".into(), ..reply.clone() },
+            Message { to: "alice/other".into(), ..reply.clone() },
+            Message { from_agent: Some("cursor".into()), ..reply.clone() },
+            Message { reply_to: None, ..reply.clone() },
+        ] {
+            store.ack_zcode_reply(&bad).unwrap();
+            assert_eq!(store.unread_count("bob/zcode").unwrap(), 1);
+        }
+        store.ack_zcode_reply(&reply).unwrap();
+        store.ack_zcode_reply(&reply).unwrap();
+        assert_eq!(store.unread_count("bob/zcode").unwrap(), 0);
+        assert!(store.has("incoming").unwrap(), "confirmation does not delete the message");
+        let held = Message { id: "held".into(), ..original };
+        store.insert(&held, true).unwrap();
+        store.ack_zcode_reply(&Message { reply_to: Some("held".into()), ..reply }).unwrap();
+        assert_eq!(store.held().unwrap().len(), 1);
+    }
 
     #[test]
     fn a_session_gone_a_day_is_forgotten_with_the_mail_it_never_read() {

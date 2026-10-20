@@ -211,7 +211,9 @@ impl Daemon {
         } else {
             Vec::new()
         };
-        // Not marked read here: the hook confirms with `Delivered` once it has printed them. Until then they are in
+        let msgs = if agent == "zcode" { crate::hook::zcode::batch(msgs) } else { msgs };
+        // Not marked read here: most hooks confirm with `Delivered` after stdout; ZCode waits for a reply/inbox read.
+        // Until then they are in
         // flight, so a hook asking at the same moment (opencode 2.x can run two plugin instances) doesn't get them too.
         let ids: Vec<String> = msgs.iter().map(|m| m.id.clone()).collect();
         for id in &ids {
