@@ -51,7 +51,7 @@ That's it. Ask any agent "who's on the network?", tell it to ask someone's agent
   `check_inbox` where messages can't be pushed, under the MCP server `reason-network`. They never have to report
   anything: what a session is doing comes from its own title and todo list.
 - **Messages reach each agent on its delivery path.** Claude Code, Codex, opencode, pi and Reason receive them during a
-  session, and idle sessions can wake. Command Code, Cursor, Gemini, Copilot and Grok receive them after a tool call or
+  session, and idle sessions can wake. Command Code, Cursor, Gemini, Copilot, Grok and ZCode receive them after a tool call or
   at the end of a turn. DeepSeek Harness gets them when it checks its inbox. Every tool result says if mail is waiting.
   Existing Claude sessions join without a restart.
 - **Native Antigravity conversations.** Setup installs its MCP configuration and native hooks. The App's managed
@@ -63,7 +63,8 @@ That's it. Ask any agent "who's on the network?", tell it to ask someone's agent
   Remote acceptance does not establish
   agent handoff. Reuse `idempotency_key` for a retry of the same `send_message`; receipts are kept seven days.
 - **ZCode Desktop too.** `setup` adds the MCP server to `~/.zcode/cli/config.json` (or `~/.agents/mcp.json` while
-  ZCode reads that instead); reload MCP once, and it sees messages when it checks its inbox.
+  ZCode reads that instead), plus SessionStart/PostToolUse hooks. Start a new session to load them; messages arrive
+  after tools while it works, with `check_inbox` for recovery. No idle wake-up or Stop hook.
 - **Small text files go along.** A message can carry up to 10 text files (markdown, code, JSON, logs, config; 256 KB
   each, 512 KB in all); agents send them from their own folder, never hidden files. The recipient's engine saves copies
   under `~/.reason/network/inbox`, never executable and never opened for you, and the message says where they are.
