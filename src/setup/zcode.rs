@@ -10,7 +10,20 @@ pub(super) fn installed() -> bool {
 }
 
 pub(super) fn wired(exe: &Path) -> bool {
-    files(&home()).into_iter().any(|(path, _)| has(path, &me(exe)))
+    wired_in(&home(), exe)
+}
+
+/// Whether ours is in the file ZCode reads: its own while that has any server, else the `.agents` one.
+fn wired_in(home: &Path, exe: &Path) -> bool {
+    let read = |(path, native): (PathBuf, bool)| -> Result<Map<String, Value>> {
+        Ok(servers(&mut read_json(&path)?, native)?.clone())
+    };
+    let [native, fallback] = files(home);
+    let servers = match read(native) {
+        Ok(s) if s.is_empty() => read(fallback),
+        s => s,
+    };
+    servers.is_ok_and(|s| s.get(AGENT_NAME).is_some_and(|e| contains(&e.to_string(), &me(exe))))
 }
 
 pub(super) fn apply(exe: &Path, remove: bool, dry: bool) -> Result<Option<Report>> {
@@ -34,20 +47,16 @@ fn servers(v: &mut Value, native: bool) -> Result<&mut Map<String, Value>> {
 fn apply_in(home: &Path, exe: &Path, remove: bool, dry: bool) -> Result<Report> {
     let mut r = Report { agent: "ZCode Desktop", lines: Vec::new(), notes: Vec::new() };
     let [native, fallback] = files(home);
+    // Our own entry doesn't count: ZCode should go on reading `.agents` when ours is all its own file has.
+    let to_fallback = !remove
+        && !servers(&mut read_json(&native.0)?, true)?.keys().any(|k| k != AGENT_NAME)
+        && !servers(&mut read_json(&fallback.0)?, false)?.is_empty();
     // Removing takes ours out of both: which one ZCode reads may have changed since.
-    let targets = if remove {
-        vec![native, fallback]
-    } else if servers(&mut read_json(&native.0)?, true)?.is_empty()
-        && !servers(&mut read_json(&fallback.0)?, false)?.is_empty()
-    {
-        vec![fallback]
-    } else {
-        vec![native]
-    };
+    let targets = if remove || to_fallback { vec![native, fallback] } else { vec![native] };
     for (path, native) in targets {
         let mut v = read_json(&path)?;
         let servers = servers(&mut v, native)?;
-        if remove {
+        if remove || (native && to_fallback) {
             if servers.remove(AGENT_NAME).is_none() {
                 continue;
             }
@@ -118,6 +127,37 @@ mod tests {
         assert!(read(&fallback)["mcpServers"][AGENT_NAME].is_object());
         apply_in(&h, Path::new("/opt/reason-network"), true, false).unwrap();
         assert_eq!(read(&fallback), json!({"mcpServers": {"memory": {"command": "npx"}}}));
+        std::fs::remove_dir_all(h).unwrap();
+    }
+
+    #[test]
+    fn moves_to_agents_when_ours_is_all_zcode_has() {
+        let h = scratch();
+        let [(native, _), (fallback, _)] = files(&h);
+        let exe = Path::new("/opt/reason-network");
+        apply_in(&h, exe, false, false).unwrap();
+        put(&fallback, r#"{"mcpServers":{"memory":{"command":"npx"}}}"#);
+        apply_in(&h, exe, false, false).unwrap();
+        assert_eq!(read(&native), json!({"mcp": {"servers": {}}}));
+        assert!(read(&fallback)["mcpServers"][AGENT_NAME].is_object());
+        std::fs::remove_dir_all(h).unwrap();
+    }
+
+    #[test]
+    fn wired_only_where_zcode_reads() {
+        let h = scratch();
+        let [(native, _), (fallback, _)] = files(&h);
+        let exe = Path::new("/opt/reason-network");
+        assert!(!wired_in(&h, exe));
+        apply_in(&h, exe, false, false).unwrap();
+        assert!(wired_in(&h, exe));
+        assert!(!wired_in(&h, Path::new("/elsewhere/reason-network")));
+        // In `.agents`, ours counts only while ZCode's own file has no server.
+        put(&fallback, &json!({"mcpServers": {AGENT_NAME: {"command": "/opt/reason-network"}}}).to_string());
+        put(&native, r#"{"mcp":{"servers":{}}}"#);
+        assert!(wired_in(&h, exe));
+        put(&native, r#"{"mcp":{"servers":{"memory":{"command":"npx"}}}}"#);
+        assert!(!wired_in(&h, exe));
         std::fs::remove_dir_all(h).unwrap();
     }
 
