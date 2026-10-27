@@ -135,6 +135,16 @@ python3 tests/e2e/hooks.py && python3 tests/e2e/codex_busy.py && python3 tests/e
 A `v*` tag builds the macOS, Linux and Windows archives and the install scripts; the Reason CLI pins the macOS and
 Linux ones.
 
+### Windows desktop directory
+
+Build with `cargo build --features desktop`, then run `target\debug\reason-network.exe desktop`.
+The opt-in native window uses the installed Microsoft Edge WebView2 Runtime to show the local daemon's team,
+machines and live sessions. Search, refresh and copy session addresses or your team link. It does not consume
+messages or register an agent. When the daemon is offline, run `reason-network who` to start it, then refresh.
+This Windows desktop build also opens the window when launched without arguments, and creates no console window.
+The default CLI build needs no desktop dependencies; no listening HTTP server or external web page is used.
+The embedded frontend regression test runs with `node tests/desktop_frontend.cjs` and needs no packages.
+
 ## Contributing
 
 Issues and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).

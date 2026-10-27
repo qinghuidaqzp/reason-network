@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-reason-desktop'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Reason Network</title>
+  <style>
+    :root{color-scheme:light;--canvas:#f7f8fa;--paper:#fff;--ink:#17212e;--muted:#75808e;--line:#e7ebef;--green:#17806c;--soft:#eaf5f0;--nav:#f0f2f4;--radius:14px;font-family:"Segoe UI",system-ui,sans-serif;font-size:14px}
+    *{box-sizing:border-box}body{margin:0;background:var(--canvas);color:var(--ink);min-width:760px}button,input{font:inherit}button{cursor:pointer}button:disabled{cursor:default;opacity:.45}button,input{outline:none}button:focus-visible,input:focus-visible{outline:3px solid #86cbb9;outline-offset:3px}button{transition:background .15s,border-color .15s}svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}[hidden]{display:none!important}
+    .layout{display:grid;grid-template-columns:208px minmax(0,1fr);min-height:100vh}.sidebar{position:fixed;inset:0 auto 0 0;width:208px;padding:31px 18px 20px;border-right:1px solid var(--line);background:#fbfcfd;display:flex;flex-direction:column}.brand{display:flex;align-items:center;gap:12px;padding:0 10px 30px}.brand-mark{display:grid;place-items:center;width:35px;height:35px;border-radius:10px;background:var(--ink);color:#fff;font-size:24px;font-weight:650;line-height:1}.brand-name{font-size:19px;font-weight:650;letter-spacing:-.65px}.brand-sub{font-size:10px;letter-spacing:2.2px;color:var(--muted);margin-top:3px;text-transform:uppercase}.nav-label{padding:0 12px 10px;color:#929ba5;font-size:10px;letter-spacing:1.6px;font-weight:600;text-transform:uppercase}.nav{display:flex;flex-direction:column;gap:5px}.nav button{border:0;background:transparent;color:#65717e;padding:11px 12px;border-radius:9px;display:flex;align-items:center;gap:11px;text-align:left;font-size:13px}.nav button:hover{background:#f0f3f5}.nav button[aria-current="page"]{background:var(--soft);color:#1d7362;font-weight:600}.nav-count{margin-left:auto;font-size:11px;color:var(--muted);background:#edf0f3;border-radius:5px;padding:2px 6px}.nav button[aria-current="page"] .nav-count{background:#dbebe4;color:#397f6c}.sidebar-bottom{margin-top:auto;padding:22px 10px 0}.local-tag{display:flex;align-items:center;gap:7px;font-size:11px;color:#6d7985}.dot{display:inline-block;flex-shrink:0;width:6px;height:6px;border-radius:50%;background:#a0a9b3}.dot.green{background:#289b79}.sidebar-copy{font-size:11px;line-height:1.7;color:#98a1ac;margin:10px 0 0}.identity{margin-top:20px;padding-top:17px;border-top:1px solid var(--line);display:flex;align-items:center;gap:9px}.identity-avatar{width:29px;height:29px;display:grid;place-items:center;background:#e6eeea;border-radius:50%;color:#497365;font-size:11px;font-weight:600}.identity-text{min-width:0}.identity-name{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.identity-machine{font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
+    .main{grid-column:2;min-width:0}.topbar{height:76px;display:flex;align-items:center;justify-content:space-between;padding:0 34px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.75)}.breadcrumb{display:flex;align-items:center;gap:11px;font-size:12px;color:#9aa3ad}.breadcrumb strong{color:#46515f;font-weight:500;max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.top-actions{display:flex;align-items:center;gap:16px}.connection{display:flex;align-items:center;gap:7px;color:#687582;font-size:11px;white-space:nowrap}.top-rule{height:20px;width:1px;background:var(--line)}.icon-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;background:var(--paper);border:1px solid #dfe5e9;color:#566271;padding:8px 11px;border-radius:7px;font-size:11px;white-space:nowrap}.icon-button:hover{background:#f2f5f7;border-color:#cbd6dc}.icon-button svg{width:14px;height:14px}.content{max-width:1430px;margin:0 auto;padding:32px 34px 22px}.eyebrow{color:var(--green);font-weight:600;font-size:10px;letter-spacing:1.8px;text-transform:uppercase}.heading-row{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-top:8px}.heading-row h1{font-size:29px;line-height:1.3;letter-spacing:-1px;font-weight:620;margin:0}.intro{margin:9px 0 26px;font-size:12px;color:var(--muted);line-height:1.65}.quiet-badge{font-size:10px;border:1px solid #e0e7e3;color:#6d8077;padding:5px 9px;border-radius:6px;background:#f6faf7;white-space:nowrap}.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:29px}.stat{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;position:relative}.stat-title{font-size:11px;color:#78838f;display:flex;align-items:center;gap:7px}.stat-title svg{width:14px;height:14px;color:#84938d}.stat-number{font-size:31px;font-weight:620;line-height:1.2;letter-spacing:-1px;margin:13px 0 4px}.stat-note{font-size:10px;color:#9aa2ad}.stat .tiny-dot{position:absolute;right:20px;top:20px;width:5px;height:5px;background:#b2d7c7;border-radius:50%}.stat .unread{color:var(--green)}
+    .banner{display:flex;gap:11px;align-items:flex-start;background:#fff8e9;border:1px solid #f0dfba;color:#8b6527;border-radius:10px;padding:12px 14px;font-size:11px;line-height:1.6;margin-bottom:20px}.banner svg{width:16px;height:16px;margin-top:1px}.section-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:13px;gap:16px}.section-title{display:flex;align-items:center;gap:9px;font-size:14px;letter-spacing:-.15px;font-weight:620;margin:0}.count-pill{font-size:10px;line-height:18px;background:#edf0f3;color:#7e8895;border-radius:5px;min-width:21px;text-align:center;padding:0 5px;font-weight:500}.search{position:relative;width:235px}.search svg{position:absolute;left:11px;top:10px;width:14px;height:14px;color:#94a0aa;pointer-events:none}.search input{width:100%;height:35px;border:1px solid #e0e6eb;border-radius:8px;background:#fff;padding:0 11px 0 33px;font-size:11px;color:#465261}.search input::placeholder{color:#a4acb6}.sessions-panel{background:#fff;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}.panel-tools{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:13px 17px;border-bottom:1px solid var(--line)}.filters{display:flex;gap:4px}.filter{border:0;background:transparent;color:#8b95a0;border-radius:6px;font-size:10px;padding:6px 9px}.filter:hover{background:#f5f6f8}.filter[aria-pressed="true"]{background:#f0f3f5;color:#475461;font-weight:600}.panel-hint{font-size:10px;color:#9ba4ad;white-space:nowrap}.table-head,.session-row{display:grid;grid-template-columns:minmax(130px,1.12fr) minmax(120px,1.35fr) 76px 62px 29px;gap:15px;align-items:center}.table-head{background:#fcfdfe;padding:11px 20px;border-bottom:1px solid #edf0f3;color:#969faa;font-size:9px;letter-spacing:1.1px;text-transform:uppercase;font-weight:500}.session-row{padding:17px 20px;border-bottom:1px solid #edf0f3;min-height:84px}.session-row:last-child{border-bottom:0}.session-who{display:flex;align-items:center;gap:10px;min-width:0}.agent-avatar{width:33px;height:33px;display:grid;place-items:center;border-radius:9px;background:#f0f2f5;color:#677380;font-size:12px;font-weight:600;flex-shrink:0}.agent-avatar.codex{background:#eaf2ef;color:#487263}.agent-avatar.claude{background:#faeee6;color:#b18362}.agent-avatar.cursor{background:#eceef6;color:#70778e}.agent-avatar.zcode{background:#ebf2fa;color:#6888ae}.agent-avatar.gemini{background:#f0edfa;color:#9383b4}.truncate{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.session-name{font-size:12px;font-weight:600;line-height:1.4}.session-person{color:#98a1ac;font-size:10px;margin-top:4px;line-height:1.3}.session-details{min-width:0}.session-place{font-size:11px;color:#596574;line-height:1.4}.session-doing{font-size:10px;color:#9aa2ad;margin-top:5px;line-height:1.4}.status{display:inline-flex;align-items:center;gap:5px;font-size:10px;color:#7e8b96;white-space:nowrap}.status.busy{color:#39836c}.status.idle{color:#87929c}.status.offline{color:#a5abb3}.status .dot{width:5px;height:5px}.status.busy .dot{background:#3f9a7b}.status.idle .dot{background:#a2b5ab}.delivery{display:flex;flex-direction:column;gap:5px;font-size:10px;color:#8f99a5}.unread-pill{color:#288268;background:#eef7f1;align-self:flex-start;border-radius:4px;font-size:9px;padding:2px 5px;font-weight:600}.copy-button{height:29px;width:29px;display:grid;place-items:center;border:1px solid transparent;background:transparent;color:#9aa4ae;border-radius:6px}.copy-button:hover{color:#477766;background:#edf5f1;border-color:#e0ece6}.copy-button svg{width:14px;height:14px}.panel-footer{border-top:1px solid var(--line);padding:11px 20px;background:#fcfdfe;color:#9aa3ad;font-size:10px;display:flex;justify-content:space-between;gap:12px}.empty{padding:36px 25px;text-align:center}.empty-symbol{width:39px;height:39px;display:grid;place-items:center;border:1px solid #e3eae6;background:#f7faf8;color:#91aa9b;border-radius:12px;margin:0 auto 13px}.empty-title{font-size:12px;color:#62707e;font-weight:550}.empty-detail{font-size:11px;color:#9aa2ab;line-height:1.7;max-width:360px;margin:6px auto 0}.empty-detail code{font-family:Consolas,monospace;font-size:10px;color:#687a6f}.machines-section{margin-top:27px}.machine-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.machine-card{display:flex;align-items:center;gap:11px;padding:15px 16px;background:#fff;border:1px solid var(--line);border-radius:11px;min-width:0}.machine-icon{display:grid;place-items:center;width:32px;height:32px;background:#f3f5f6;border:1px solid #e9edef;border-radius:8px;color:#84928c;flex-shrink:0}.machine-icon svg{width:16px;height:16px}.machine-copy{flex:1;min-width:0}.machine-title{font-size:11px;color:#52616d;font-weight:550}.machine-detail{font-size:10px;color:#9ba4ae;margin-top:4px}.machine-status{font-size:9px;color:#8c9d92;display:flex;align-items:center;gap:6px;white-space:nowrap}.machine-status.offline{color:#a4aab2}.footer{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-top:22px;color:#9aa4ad;font-size:10px;line-height:1.5}.footer .privacy{display:flex;align-items:center;gap:5px}.footer svg{width:11px;height:11px}.notice{position:fixed;bottom:22px;left:calc(50% + 104px);transform:translateX(-50%);background:#203a32;color:#fff;font-size:11px;padding:11px 17px;border-radius:9px;box-shadow:0 8px 25px #172d2620;max-width:560px;text-align:center;z-index:10}.loading .stat-number{color:#bdc5ca}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@media(min-width:1200px){.content{padding:38px 44px 25px}.topbar{padding:0 44px}.table-head,.session-row{grid-template-columns:minmax(160px,1fr) minmax(170px,1.4fr) 100px 76px 29px;gap:18px}.session-row{padding:19px 22px}.table-head{padding-left:22px;padding-right:22px}}@media(max-width:980px){.layout{grid-template-columns:166px minmax(0,1fr)}.sidebar{width:166px;padding-left:12px;padding-right:12px}.brand{padding-left:8px;gap:9px}.brand-name{font-size:17px}.brand-mark{width:30px;height:30px}.content{padding:27px 22px 20px}.topbar{padding:0 22px}.top-actions{gap:10px}.top-rule{display:none}.connection{font-size:10px}.table-head,.session-row{grid-template-columns:minmax(125px,1.1fr) minmax(105px,1.1fr) 64px 49px 27px;gap:10px}.table-head,.session-row{padding-left:15px;padding-right:15px}.stat{padding:16px}.heading-row h1{font-size:25px}.machine-grid{grid-template-columns:1fr}.notice{left:calc(50% + 83px)}.panel-hint{display:none}.search{width:190px}.session-who{gap:8px}.agent-avatar{width:29px;height:29px}.session-name{font-size:11px}.stats{gap:10px}.quiet-badge{font-size:9px}.breadcrumb strong{max-width:220px}}
+  </style>
+</head>
+<body class="loading">
+  <div class="layout">
+    <aside class="sidebar" aria-label="Application sidebar">
+      <div class="brand"><div class="brand-mark" aria-hidden="true">r</div><div><div class="brand-name">Reason</div><div class="brand-sub">Network</div></div></div>
+      <div class="nav-label">Workspace</div>
+      <nav class="nav" aria-label="Views">
+        <button type="button" data-view="overview" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.3"/><rect x="14" y="3" width="7" height="7" rx="1.3"/><rect x="3" y="14" width="7" height="7" rx="1.3"/><rect x="14" y="14" width="7" height="7" rx="1.3"/></svg>Overview</button>
+        <button type="button" data-view="sessions"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 6-5 6 5 6m8-12 5 6-5 6m-3-14-2 16"/></svg>Sessions<span class="nav-count" id="nav-sessions">0</span></button>
+        <button type="button" data-view="machines"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>Machines<span class="nav-count" id="nav-machines">0</span></button>
+      </nav>
+      <div class="sidebar-bottom"><div class="local-tag"><span class="dot green"></span>Local desktop view</div><p class="sidebar-copy">Your team's agents.<br>One shared view.</p><div class="identity"><div class="identity-avatar" id="identity-avatar">R</div><div class="identity-text"><div class="identity-name" id="identity-name">Reason Network</div><div class="identity-machine" id="identity-machine">Connecting locally</div></div></div></div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><div class="breadcrumb"><span>Network</span><span aria-hidden="true">/</span><strong id="breadcrumb-team">Your team</strong></div><div class="top-actions"><span class="connection" id="connection"><span class="dot" id="connection-dot"></span><span id="connection-text">Connecting</span></span><span class="top-rule"></span><button type="button" class="icon-button" id="refresh"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-2L20 8M4 16l2.3 3A7 7 0 0 0 17.9 17"/></svg>Refresh</button></div></header>
+      <div class="content">
+        <div class="eyebrow">Your team, connected</div><div class="heading-row"><h1 id="page-title">Network overview</h1><span class="quiet-badge">Read-only directory</span></div><p class="intro" id="intro">See who's working, where they are, and how to reach them.</p>
+        <div class="banner" id="error-banner" role="status" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 4h.01"/></svg><span id="error-text"></span></div>
+        <section class="stats" aria-label="Network summary" id="stats">
+          <div class="stat"><span class="tiny-dot"></span><div class="stat-title"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>Online machines</div><div class="stat-number" id="online-machines">—</div><div class="stat-note" id="machines-note">Waiting for your daemon</div></div>
+          <div class="stat"><span class="tiny-dot"></span><div class="stat-title"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 6-5 6 5 6m8-12 5 6-5 6m-3-14-2 16"/></svg>Active sessions</div><div class="stat-number" id="active-sessions">—</div><div class="stat-note" id="sessions-note">Across your network</div></div>
+          <div class="stat"><span class="tiny-dot"></span><div class="stat-title"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 13h5l2 3h2l2-3h5"/></svg>Unread messages</div><div class="stat-number unread" id="unread-messages">—</div><div class="stat-note">For sessions on this computer</div></div>
+        </section>
+        <section id="sessions-section" aria-labelledby="sessions-title">
+          <div class="section-heading"><h2 class="section-title" id="sessions-title">Agent sessions<span class="count-pill" id="sessions-count">0</span></h2><label class="search"><span class="sr-only">Search sessions</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input id="search" type="search" placeholder="Search agents, repos, people…" autocomplete="off" spellcheck="false"></label></div>
+          <div class="sessions-panel"><div class="panel-tools"><div class="filters" role="group" aria-label="Filter sessions"><button type="button" class="filter" data-filter="all" aria-pressed="true">All sessions</button><button type="button" class="filter" data-filter="working" aria-pressed="false">Working</button><button type="button" class="filter" data-filter="unread" aria-pressed="false">Unread</button></div><span class="panel-hint">Copy an address to start a conversation</span></div><div class="table-head" aria-hidden="true"><span>Agent / session</span><span>Working on</span><span>Status</span><span>Delivery</span><span></span></div><div id="session-list" aria-label="Agent sessions"></div><div class="empty" id="session-empty"><div class="empty-symbol"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 6-5 6 5 6m8-12 5 6-5 6"/></svg></div><div class="empty-title" id="empty-title">Connecting to your network</div><p class="empty-detail" id="empty-detail">Looking for the Reason Network daemon on this computer.</p></div><div class="panel-footer"><span id="results-count">Waiting for sessions</span><span>Messages stay in their agents' inboxes</span></div></div>
+        </section>
+        <section class="machines-section" id="machines-section" aria-labelledby="machines-title"><div class="section-heading"><h2 class="section-title" id="machines-title">Your network<span class="count-pill" id="machines-count">0</span></h2><button type="button" class="icon-button" id="copy-link" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 13 4-4M8 16l-1 1a4.2 4.2 0 0 1-6-6l4-4a4.2 4.2 0 0 1 6 0m2 1 1-1a4.2 4.2 0 0 1 6 6l-4 4a4.2 4.2 0 0 1-6 0" transform="translate(1 0)"/></svg>Copy team link</button></div><div class="machine-grid" id="machine-list"></div><div class="empty" id="machine-empty" hidden><div class="empty-title">No machines to show</div><p class="empty-detail">Your team directory will appear when the local daemon is available.</p></div></section>
+        <footer class="footer"><span class="privacy"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 3v6c0 5-8 9-8 9S4 17 4 12V6z"/><path d="m8 12 3 3 5-6"/></svg>Local view · no messages are consumed</span><span id="updated">Waiting for first update</span></footer>
+      </div>
+    </main>
+  </div>
+  <div class="notice" id="notice" role="status" aria-live="polite" hidden></div>
+  <script nonce="reason-desktop">
+    'use strict';
+    const byId = id => document.getElementById(id);
+    const copyIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg>';
+    const machineIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>';
+    const labels = { 'claude-code':'Claude Code', 'claude-desktop':'Claude', codex:'Codex', cursor:'Cursor', gemini:'Gemini', zcode:'ZCode', grok:'Grok', opencode:'opencode', pi:'pi', dsh:'DeepSeek', reason:'Reason', cli:'Terminal', hermes:'Hermes' };
+    let snapshot = { directory:null, error:null, updated_at:0 };
+    let filter = 'all';
+    let view = 'overview';
+    let noticeTimer;
+    let lastDirectory;
+    const text = value => typeof value === 'string' ? value : '';
+    const count = value => Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
+    const post = payload => {
+      if (window.ipc && typeof window.ipc.postMessage === 'function') window.ipc.postMessage(JSON.stringify(payload));
+      else showNotice('The desktop connection is unavailable.');
+    };
+    function node(tag, className, content) {
+      const result = document.createElement(tag);
+      if (className) result.className = className;
+      if (content !== undefined) result.textContent = content;
+      return result;
+    }
+    function showNotice(message) {
+      const target = byId('notice');
+      target.textContent = text(message);
+      target.hidden = !target.textContent;
+      clearTimeout(noticeTimer);
+      noticeTimer = setTimeout(() => { target.hidden = true; }, 3500);
+    }
+    function knownStatus(value) { return ['busy','idle','offline','live'].includes(value) ? value : 'live'; }
+    function localSession(session, directory) { return session.person === directory.person && session.machine === directory.machine; }
+    function displayPlace(session) {
+      const repo = text(session.repo);
+      const branch = text(session.branch);
+      return repo ? repo + (branch ? ' · ' + branch : '') : text(session.cwd) || 'No workspace reported';
+    }
+    function preserveFocus(render) {
+      const focus = document.activeElement;
+      const address = focus && focus.dataset ? focus.dataset.address : undefined;
+      render();
+      if (address !== undefined) {
+        const candidate = Array.from(document.querySelectorAll('[data-address]')).find(element => element.dataset.address === address);
+        if (candidate) candidate.focus({preventScroll:true});
+      }
+    }
+    function sessionRow(session) {
+      const row = node('article','session-row');
+      const who = node('div','session-who');
+      const kind = text(session.agent);
+      const name = Object.hasOwn(labels,kind) ? labels[kind] : kind || 'Agent';
+      const avatarClass = kind.startsWith('claude') ? 'claude' : ['codex','cursor','zcode','gemini'].includes(kind) ? kind : '';
+      who.append(node('div','agent-avatar ' + avatarClass, name.slice(0,1)));
+      const identity = node('div','truncate');
+      const nameLine = node('div','session-name truncate', text(session.name) || name);
+      nameLine.title = text(session.address);
+      identity.append(nameLine, node('div','session-person truncate', text(session.person) + ' · ' + name));
+      who.append(identity);
+      const details = node('div','session-details');
+      const place = node('div','session-place truncate',displayPlace(session));
+      place.title = displayPlace(session);
+      const activity = node('div','session-doing truncate',text(session.doing) || 'No activity reported');
+      activity.title = text(session.doing);
+      details.append(place,activity);
+      const statusName = knownStatus(session.status);
+      const status = node('div','status ' + statusName);
+      status.append(node('span','dot'),node('span','',statusName === 'busy' ? 'Working' : statusName === 'live' ? 'Live' : statusName.slice(0,1).toUpperCase() + statusName.slice(1)));
+      const delivery = node('div','delivery');
+      const tier = text(session.tier);
+      delivery.append(node('span','',tier === 'push' ? 'Instant' : tier === 'turn' ? 'Next step' : tier === 'pull' ? 'Inbox' : 'Unavailable'));
+      if (count(session.unread)) delivery.append(node('span','unread-pill', count(session.unread).toLocaleString() + ' unread'));
+      const copy = node('button','copy-button');
+      copy.type = 'button';
+      copy.innerHTML = copyIcon;
+      copy.title = 'Copy ' + text(session.address);
+      copy.setAttribute('aria-label',copy.title);
+      copy.dataset.address = text(session.address);
+      copy.disabled = !copy.dataset.address;
+      copy.addEventListener('click',() => post({action:'copy_address',address:copy.dataset.address}));
+      row.append(who,details,status,delivery,copy);
+      return row;
+    }
+    function renderSessions() {
+      const directory = snapshot.directory;
+      const sessions = directory && Array.isArray(directory.sessions) ? directory.sessions : [];
+      const query = byId('search').value.trim().toLocaleLowerCase();
+      const filtered = sessions.filter(session => {
+        if (filter === 'working' && session.status !== 'busy') return false;
+        if (filter === 'unread' && !count(session.unread)) return false;
+        return !query || [session.name,session.address,session.person,session.machine,session.agent,session.repo,session.branch,session.cwd,session.doing].map(text).join(' ').toLocaleLowerCase().includes(query);
+      });
+      preserveFocus(() => {
+        const list = byId('session-list');
+        list.replaceChildren(...filtered.map(sessionRow));
+      });
+      byId('session-empty').hidden = filtered.length > 0;
+      byId('sessions-count').textContent = sessions.length.toLocaleString();
+      byId('results-count').textContent = filtered.length === sessions.length ? sessions.length.toLocaleString() + (sessions.length === 1 ? ' session' : ' sessions') : filtered.length.toLocaleString() + ' of ' + sessions.length.toLocaleString() + ' sessions';
+      if (!filtered.length) {
+        let title, detail;
+        if (!directory) {
+          title = snapshot.error ? 'The local daemon is unavailable' : 'Connecting to your network';
+          detail = snapshot.error ? 'Start Reason Network on this computer, then refresh. Your agents and messages are unchanged.' : 'Looking for the Reason Network daemon on this computer.';
+        } else if (!directory.team) {
+          title = 'You have not joined a team yet';
+          detail = 'Run reason-network in a terminal to get set up, then refresh this view.';
+        } else if (query || filter !== 'all') {
+          title = 'No matching sessions';
+          detail = 'Try another search or select All sessions.';
+        } else {
+          title = 'Your next conversation starts here';
+          detail = 'Open a coding agent with Reason Network enabled. Its session will appear here when it connects.';
+        }
+        byId('empty-title').textContent = title;
+        byId('empty-detail').textContent = detail;
+      }
+    }
+    function renderMachines(directory) {
+      const machines = Array.isArray(directory.machines) ? directory.machines : [];
+      const sessions = Array.isArray(directory.sessions) ? directory.sessions : [];
+      byId('machine-list').replaceChildren(...machines.map(machine => {
+        const card = node('article','machine-card');
+        const icon = node('div','machine-icon');
+        icon.innerHTML = machineIcon;
+        const description = node('div','machine-copy');
+        const title = node('div','machine-title truncate',text(machine.machine));
+        title.title = text(machine.machine);
+        const total = sessions.filter(session => session.person === machine.person && session.machine === machine.machine).length;
+        description.append(title,node('div','machine-detail truncate',(machine.is_me ? 'This computer' : text(machine.person)) + ' · ' + total + (total === 1 ? ' session' : ' sessions')));
+        const online = machine.online || machine.is_me;
+        const state = node('div','machine-status' + (online ? '' : ' offline'));
+        let label = 'Offline';
+        if (machine.is_me) label = 'Local';
+        else if (online) label = (machine.link === 'direct' ? 'Direct' : machine.link === 'relay' ? 'Relay' : 'Connected') + (Number.isFinite(machine.rtt_ms) ? ' · ' + count(machine.rtt_ms) + ' ms' : '');
+        state.append(node('span','dot' + (online ? ' green' : '')),node('span','',label));
+        card.append(icon,description,state);
+        return card;
+      }));
+      byId('machine-empty').hidden = machines.length > 0;
+      byId('machines-count').textContent = machines.length.toLocaleString();
+    }
+    function update(next) {
+      if (!next || typeof next !== 'object') return;
+      snapshot = next;
+      const directory = next.directory;
+      const failed = Boolean(next.error);
+      document.body.classList.remove('loading');
+      byId('error-banner').hidden = !failed;
+      byId('error-text').textContent = failed ? (directory ? 'Connection interrupted. Showing the last available directory. ' : '') + text(next.error) : '';
+      byId('connection-dot').className = 'dot' + (directory && !failed ? ' green' : '');
+      byId('connection-text').textContent = failed ? (directory ? 'Reconnecting' : 'Daemon offline') : directory ? 'Live directory' : 'Connecting';
+      byId('copy-link').disabled = !directory || !directory.team || failed;
+      if (Number.isFinite(next.updated_at) && next.updated_at > 0) byId('updated').textContent = 'Updated ' + new Date(next.updated_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      const serialized = JSON.stringify(directory);
+      if (serialized !== lastDirectory) {
+        lastDirectory = serialized;
+        const machines = directory && Array.isArray(directory.machines) ? directory.machines : [];
+        const sessions = directory && Array.isArray(directory.sessions) ? directory.sessions : [];
+        const active = sessions.filter(session => session.status !== 'offline');
+        const working = active.filter(session => session.status === 'busy').length;
+        byId('breadcrumb-team').textContent = directory && directory.team ? text(directory.team) : 'Your team';
+        byId('identity-name').textContent = directory ? text(directory.person) : 'Reason Network';
+        byId('identity-machine').textContent = directory ? text(directory.machine) : 'Daemon unavailable';
+        byId('identity-avatar').textContent = directory && text(directory.person) ? text(directory.person).slice(0,1).toUpperCase() : 'R';
+        byId('online-machines').textContent = directory ? machines.filter(machine => machine.online || machine.is_me).length.toLocaleString() : '—';
+        byId('machines-note').textContent = directory ? machines.length.toLocaleString() + (machines.length === 1 ? ' machine in your team' : ' machines in your team') : 'Start Reason Network to connect';
+        byId('active-sessions').textContent = directory ? active.length.toLocaleString() : '—';
+        byId('sessions-note').textContent = working ? working.toLocaleString() + (working === 1 ? ' agent working right now' : ' agents working right now') : 'Across your network';
+        byId('unread-messages').textContent = directory ? sessions.filter(session => localSession(session,directory)).reduce((sum,session) => sum + count(session.unread),0).toLocaleString() : '—';
+        byId('nav-sessions').textContent = sessions.length.toLocaleString();
+        byId('nav-machines').textContent = machines.length.toLocaleString();
+        renderMachines(directory || {machines:[],sessions:[]});
+      }
+      renderSessions();
+    }
+    for (const button of document.querySelectorAll('[data-filter]')) button.addEventListener('click',() => {
+      filter = button.dataset.filter;
+      for (const candidate of document.querySelectorAll('[data-filter]')) candidate.setAttribute('aria-pressed',String(candidate === button));
+      renderSessions();
+    });
+    for (const button of document.querySelectorAll('[data-view]')) button.addEventListener('click',() => {
+      view = button.dataset.view;
+      for (const candidate of document.querySelectorAll('[data-view]')) {
+        if (candidate === button) candidate.setAttribute('aria-current','page');
+        else candidate.removeAttribute('aria-current');
+      }
+      byId('page-title').textContent = view === 'sessions' ? 'Agent sessions' : view === 'machines' ? 'Your machines' : 'Network overview';
+      byId('intro').textContent = view === 'sessions' ? 'Find the right conversation and copy its exact Reason address.' : view === 'machines' ? 'Your teammates, their computers, and the connections between them.' : "See who's working, where they are, and how to reach them.";
+      byId('stats').hidden = view !== 'overview';
+      byId('sessions-section').hidden = view === 'machines';
+      byId('machines-section').hidden = view === 'sessions';
+      byId('machines-section').style.marginTop = view === 'machines' ? '0' : '';
+    });
+    byId('search').addEventListener('input',renderSessions);
+    byId('refresh').addEventListener('click',() => post({action:'refresh'}));
+    byId('copy-link').addEventListener('click',() => post({action:'copy_team_link'}));
+    document.addEventListener('keydown',event => {
+      if (event.ctrlKey && event.key.toLowerCase() === 'f' && view !== 'machines') { event.preventDefault(); byId('search').focus(); }
+    });
+    window.reasonDesktop = Object.freeze({update,notice:showNotice});
+    post({action:'ready'});
+  </script>
+</body>
+</html>

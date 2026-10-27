@@ -11,6 +11,9 @@ publish = false
 name = "reason-network"
 path = "src/main.rs"
 
+[features]
+desktop = ["dep:tao", "dep:wry"]
+
 [dependencies]
 anyhow = "1"
 blake3 = "1"
@@ -39,6 +42,8 @@ libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 console = "0.16"
+tao = { version = "0.37", optional = true }
+wry = { version = "0.57", optional = true, default-features = false, features = ["os-webview"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Pipes", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
