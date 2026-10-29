@@ -66,6 +66,13 @@ impl Daemon {
         let mut g = self.inner.lock().unwrap();
         let g = &mut *g;
         let key = reg.key.clone();
+        if reg.agent == "antigravity" && conn.is_some() && reg.tier == Tier::Push {
+            let allowed =
+                g.store.native_app_roots(&key)?.is_some_and(|roots| roots.iter().all(|root| !self.cfg.off_in(root)));
+            if !allowed {
+                bail!("Antigravity App binding is unavailable or includes a disabled workspace");
+            }
+        }
         // Its hooks said its folder is off (an MCP server several sessions share can't know its folder).
         if g.off.contains_key(&key) {
             bail!(OFF_HERE);
@@ -328,9 +335,13 @@ impl Daemon {
         let (agent, event) = (agent.as_str(), event.as_str());
         let key = format!("{agent}:{session_id}");
         let now = util::now_ms();
+        let mut native_dirs: Vec<String> = cwd.iter().chain(&dirs).cloned().collect();
         // In a folder that is off, by any folder the agent names: never a session here, only noted as off.
         if cwd.iter().chain(&dirs).any(|d| self.cfg.off_in(d)) {
             let mut g = self.inner.lock().unwrap();
+            if agent == "antigravity" {
+                g.store.remember_native_app(&key, None, &[])?;
+            }
             if let Some(l) = g.live.remove(&key) {
                 let _ = g.store.touch_session(&l.name, now);
                 self.presence_changed();
@@ -351,8 +362,13 @@ impl Daemon {
         self.inner.lock().unwrap().off.remove(&key);
         if event == "end" {
             let mut g = self.inner.lock().unwrap();
+            if agent == "antigravity" {
+                g.store.remember_native_app(&key, None, &[])?;
+            }
             // Gemini's MCP server outlives a conversation (`/clear`): its hooks say when one ends.
-            if g.live.get(&key).is_some_and(|l| l.conn.is_none() || agent::session_from_hooks(agent))
+            if g.live
+                .get(&key)
+                .is_some_and(|l| l.conn.is_none() || agent::session_from_hooks(agent) || agent == "antigravity")
                 && let Some(l) = g.live.remove(&key)
             {
                 let _ = g.store.touch_session(&l.name, now);
@@ -417,6 +433,15 @@ impl Daemon {
         }
         let address = self.addr(&l.name);
         let agent_kind = l.reg.agent.clone();
+        let native_app = agent == "antigravity"
+            && l.transcript.as_ref().is_some_and(|p| crate::antigravity::app_transcript(&p.to_string_lossy()));
+        if native_app {
+            l.reg.pid = None;
+            if !native_dirs.contains(&l.reg.cwd) {
+                native_dirs.push(l.reg.cwd.clone());
+            }
+            g.store.remember_native_app(&key, Some(now), &native_dirs)?;
+        }
         // Mid-turn, only what should interrupt; at a pause, everything.
         let msgs: Vec<Message> = if mail {
             g.pending(&address)?.into_iter().filter(|m| event != "tool" || m.wake).collect()
@@ -495,12 +520,24 @@ impl Daemon {
         let now = util::now_ms();
         let mut g = self.inner.lock().unwrap();
         g.conns.remove(&conn);
+        if g.antigravity_conn == Some(conn) {
+            g.antigravity_conn = None;
+        }
         let mine: Vec<String> = g.live.iter().filter(|(_, l)| l.conn == Some(conn)).map(|(k, _)| k.clone()).collect();
         for key in mine {
             let l = g.live.get_mut(&key).expect("listed above");
             // Hooks still vouch for it: keep it, reachable through them.
-            if l.last_hook.is_some() && l.reg.pid.is_some_and(util::pid_alive) {
+            if l.last_hook.is_some()
+                && (l.reg.pid.is_some_and(util::pid_alive)
+                    || l.reg.agent == "antigravity"
+                        && l.reg.pid.is_none()
+                        && l.last_hook.is_some_and(|at| now - at < HOOK_TTL_MS))
+            {
                 l.conn = None;
+                if l.reg.agent == "antigravity" {
+                    l.reg.tier = Tier::Turn;
+                    l.mcp_push = false;
+                }
                 continue;
             }
             if let Some(l) = g.live.remove(&key) {

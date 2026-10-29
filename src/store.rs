@@ -43,6 +43,7 @@ const COUNTS_TO: &str = "+1 day";
 /// Days of counts kept: the last ones started, in the order they started rather than by date, so a clock that jumps
 /// doesn't push out the real ones.
 const COUNTS_KEPT: i64 = 8;
+const RECEIPT_KEEP_MS: i64 = 7 * 86_400_000;
 
 /// A held message that can't be approved now, and why (it stays held).
 pub type Unsaved = (String, String);
@@ -101,6 +102,18 @@ CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS send_keys (
+    key TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL,
+    receipt TEXT,
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sent_receipts (
+    id TEXT PRIMARY KEY, sender_key TEXT NOT NULL, sender TEXT NOT NULL, recipient TEXT NOT NULL,
+    stage TEXT NOT NULL, sent_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS send_keys_created_at ON send_keys(created_at);
+CREATE INDEX IF NOT EXISTS sent_receipts_sent_at ON sent_receipts(sent_at);
 CREATE TABLE IF NOT EXISTS sessions (
     name TEXT PRIMARY KEY,
     key TEXT NOT NULL,
@@ -127,6 +140,101 @@ const MESSAGE_COLS: &str =
 const SESSION_COLS: &str = "name, key, agent, cwd, repo, branch, doing, tier, last_seen, attached, mailbox";
 
 impl Store {
+    pub fn record_sent(&self, key: &str, message: &Message, recipient: &str, state: &str) -> Result<()> {
+        let stage = match state {
+            "refused" => "rejected",
+            "held" => "held",
+            "queued" => "queued",
+            _ => "accepted",
+        };
+        self.prune_receipts(crate::util::now_ms())?;
+        self.db.execute(
+            "INSERT OR IGNORE INTO sent_receipts VALUES (?1,?2,?3,?4,?5,?6,?6)",
+            params![message.id, key, message.from, recipient, stage, message.sent_at],
+        )?;
+        Ok(())
+    }
+    pub fn handoff(&self, ids: &[String], now: i64) -> Result<()> {
+        for id in ids {
+            self.db.execute(
+                "UPDATE sent_receipts SET stage='handed_to_agent',updated_at=?2 WHERE id=?1 AND stage <> 'replied'",
+                params![id, now],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn send_outcome(&self, id: &str, state: &str) -> Result<()> {
+        let stage = match state {
+            "refused" => "rejected",
+            "held" => "held",
+            "queued" => "queued",
+            _ => "accepted",
+        };
+        self.db.execute("UPDATE sent_receipts SET stage=?2,updated_at=?3 WHERE id=?1 AND stage NOT IN ('handed_to_agent','replied')", params![id,stage,crate::util::now_ms()])?;
+        Ok(())
+    }
+
+    pub fn queue_again(&self, ids: &[String]) -> Result<()> {
+        for id in ids {
+            self.db.execute("UPDATE sent_receipts SET stage='queued',updated_at=?2 WHERE id=?1 AND stage NOT IN ('handed_to_agent','replied')", params![id,crate::util::now_ms()])?;
+        }
+        Ok(())
+    }
+    pub fn delivery_status(&self, key: &str, ids: &[String]) -> Result<Vec<serde_json::Value>> {
+        anyhow::ensure!(ids.len() <= 100, "request at most 100 delivery receipts");
+        let mut out = Vec::new();
+        for id in ids {
+            let found = self.db.query_row("SELECT recipient,stage,sent_at,updated_at FROM sent_receipts WHERE id=?1 AND sender_key=?2 AND sent_at>=?3", params![id,key,crate::util::now_ms()-RECEIPT_KEEP_MS], |r| Ok(serde_json::json!({"id":id,"recipient":r.get::<_,String>(0)?,"stage":r.get::<_,String>(1)?,"sentAt":r.get::<_,i64>(2)?,"updatedAt":r.get::<_,i64>(3)?}))).optional()?;
+            out.push(found.unwrap_or_else(|| serde_json::json!({"id":id,"stage":"unknown"})));
+        }
+        Ok(out)
+    }
+    pub fn begin_send(
+        &self,
+        key: &str,
+        fingerprint: &str,
+        now: i64,
+    ) -> Result<(String, Option<crate::proto::SendResult>)> {
+        self.prune_receipts(now)?;
+        self.db.execute(
+            "INSERT OR IGNORE INTO send_keys(key,fingerprint,created_at,nonce) VALUES(?1,?2,?3,?4)",
+            params![key, fingerprint, now, ulid::Ulid::generate().to_string()],
+        )?;
+        let (old, receipt, nonce): (String, Option<String>, String) =
+            self.db.query_row("SELECT fingerprint,receipt,nonce FROM send_keys WHERE key=?1", [key], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })?;
+        anyhow::ensure!(
+            old == fingerprint,
+            "idempotency key already used for a different message; use a new key for a corrected or different message"
+        );
+        Ok((nonce, receipt.map(|v| serde_json::from_str(&v)).transpose()?))
+    }
+
+    pub fn finish_send(&self, key: &str, receipt: &crate::proto::SendResult) -> Result<()> {
+        self.db
+            .execute("UPDATE send_keys SET receipt=?2 WHERE key=?1", params![key, serde_json::to_string(receipt)?])?;
+        Ok(())
+    }
+
+    fn prune_receipts(&self, now: i64) -> Result<()> {
+        self.db.execute("DELETE FROM sent_receipts WHERE sent_at < ?1", [now - RECEIPT_KEEP_MS])?;
+        self.db.execute("DELETE FROM send_keys WHERE created_at < ?1", [now - RECEIPT_KEEP_MS])?;
+        Ok(())
+    }
+
+    fn discard_receipt(&self, id: &str, stage: &str, now: i64) -> Result<()> {
+        self.db.execute("UPDATE sent_receipts SET stage=?2,updated_at=?3 WHERE id=?1 AND stage NOT IN ('handed_to_agent','replied')",params![id,stage,now])?;
+        Ok(())
+    }
+    pub fn queue_health(&self, address: &str) -> Result<(u32, Option<i64>)> {
+        Ok(self.db.query_row(
+            "SELECT count(*), min(sent_at) FROM messages WHERE recipient=?1 AND read_at IS NULL AND held=0",
+            [address],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?)
+    }
     /// The database at `path`, and the folder `inbox` that messages' files are saved in.
     pub fn open(path: &Path, inbox: PathBuf) -> Result<Self> {
         let db = Connection::open(path)?;
@@ -170,6 +278,19 @@ impl Store {
                 [],
             )?;
             tx.commit()?;
+        }
+        for (column, definition) in [
+            ("native_app", "INTEGER NOT NULL DEFAULT 0"),
+            ("native_hook_at", "INTEGER"),
+            ("native_dirs", "TEXT NOT NULL DEFAULT '[]'"),
+        ] {
+            if !db.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name=?1")?.exists([column])? {
+                db.execute(&format!("ALTER TABLE sessions ADD COLUMN {column} {definition}"), [])?;
+            }
+        }
+        if !db.prepare("SELECT 1 FROM pragma_table_info('send_keys') WHERE name='nonce'")?.exists([])? {
+            // Empty preserves the identity derivation of an unfinished send from an earlier engine. New keys get a nonce.
+            db.execute("ALTER TABLE send_keys ADD COLUMN nonce TEXT NOT NULL DEFAULT ''", [])?;
         }
         Ok(Store { db, inbox })
     }
@@ -225,6 +346,9 @@ impl Store {
                 held
             ],
         );
+        if n.as_ref().is_ok_and(|n| *n == 1) && !held {
+            let _ = self.observe_reply(m);
+        }
         match (n, saved, kept) {
             (Ok(n), Some(dir), Some(k)) => {
                 m.files = files::located(&dir, &k.files);
@@ -243,6 +367,13 @@ impl Store {
     pub fn message(&self, id: &str) -> Result<Option<Message>> {
         let sql = format!("SELECT {MESSAGE_COLS}, held FROM messages WHERE id = ?1");
         Ok(self.db.query_row(&sql, [id], |r| self.row(r)).optional()?)
+    }
+
+    fn observe_reply(&self, message: &Message) -> Result<()> {
+        if let Some(reply) = &message.reply_to {
+            self.db.execute("UPDATE sent_receipts SET stage='replied',updated_at=?4 WHERE id=?1 AND recipient=?2 AND sender=?3 AND stage <> 'replied'", params![reply,message.from,message.to,crate::util::now_ms()])?;
+        }
+        Ok(())
     }
 
     pub fn has(&self, id: &str) -> Result<bool> {
@@ -301,6 +432,7 @@ impl Store {
     /// without them), and a message held a week with files goes altogether. Then deletes every folder in the inbox
     /// folder that no kept message names.
     pub fn sweep_files(&self, now: i64) -> Result<()> {
+        self.prune_receipts(now)?;
         let mut st = self.db.prepare("SELECT id, files, read_at, held FROM messages WHERE files IS NOT NULL")?;
         let rows: Vec<(String, String, Option<i64>, bool)> =
             st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<rusqlite::Result<_>>()?;
@@ -312,6 +444,7 @@ impl Store {
             let fresh = came.is_some_and(|t| t > now - files::KEEP_UNREAD_MS);
             if held {
                 if !fresh {
+                    self.discard_receipt(&id, "expired", now)?;
                     self.db.execute("DELETE FROM messages WHERE id = ?1", [&id])?;
                 }
             } else if (read_at.is_none() && fresh) || read_at.is_some_and(|t| t > now - files::KEEP_MS) {
@@ -340,7 +473,10 @@ impl Store {
         let (mut done, mut unsaved) = (Vec::new(), Vec::new());
         for mut m in picked {
             if !release {
+                let transaction = self.db.unchecked_transaction()?;
+                self.discard_receipt(&m.id, "rejected", crate::util::now_ms())?;
                 self.db.execute("DELETE FROM messages WHERE id = ?1", [&m.id])?;
+                transaction.commit()?;
                 done.push(m);
                 continue;
             }
@@ -371,6 +507,7 @@ impl Store {
                 return Err(e.into());
             }
             let _ = self.count(crate::util::now_ms(), Counted::Received);
+            let _ = self.observe_reply(&m);
             done.push(m);
         }
         Ok((done, unsaved))
@@ -395,10 +532,18 @@ impl Store {
     /// The receiving machine answered for a message: it leaves the outbox, and counts as sent if that machine took it
     /// (once, however many answers come).
     pub fn outbox_done(&self, id: &str, taken: bool) -> Result<bool> {
+        let transaction = self.db.unchecked_transaction()?;
         let removed = self.db.execute("DELETE FROM outbox WHERE id = ?1", [id])? == 1;
-        if removed && taken {
-            let _ = self.count(crate::util::now_ms(), Counted::Sent);
+        if removed {
+            self.db.execute(
+                "UPDATE sent_receipts SET stage=?3,updated_at=?2 WHERE id=?1 AND stage NOT IN ('handed_to_agent','replied')",
+                params![id, crate::util::now_ms(), if taken {"accepted"} else {"rejected"}],
+            )?;
+            if taken {
+                let _ = self.count(crate::util::now_ms(), Counted::Sent);
+            }
         }
+        transaction.commit()?;
         Ok(removed)
     }
 
@@ -502,7 +647,10 @@ impl Store {
                  ON CONFLICT (name) DO UPDATE SET key = ?2, agent = ?3, cwd = ?4, repo = ?5, branch = ?6,
                  doing = ?7, tier = ?8, last_seen = ?9,
                  attached = CASE WHEN key = ?2 THEN max(attached, ?10) ELSE ?10 END,
-                 mailbox = CASE WHEN key = ?2 THEN max(mailbox, ?11) ELSE ?11 END"
+                 mailbox = CASE WHEN key = ?2 THEN max(mailbox, ?11) ELSE ?11 END,
+                 native_app = CASE WHEN key = ?2 THEN native_app ELSE 0 END,
+                 native_hook_at = CASE WHEN key = ?2 THEN native_hook_at ELSE NULL END,
+                 native_dirs = CASE WHEN key = ?2 THEN native_dirs ELSE '[]' END"
             ),
             params![
                 s.name,
@@ -543,6 +691,7 @@ impl Store {
     /// the name was kept for the session: it was that conversation's, never the next one's. Otherwise it stays the
     /// person's to settle, for whoever has the name.
     pub fn forget_session(&self, r: &Remembered, person: &str) -> Result<()> {
+        let transaction = self.db.unchecked_transaction()?;
         let unread = if r.kept() {
             "FROM messages WHERE recipient = ?1 AND read_at IS NULL"
         } else {
@@ -552,13 +701,15 @@ impl Store {
         let to = format!("{person}/{name}");
         let mut cols = self.db.prepare_cached(&format!("SELECT files {unread} AND files IS NOT NULL"))?;
         let cols: Vec<String> = cols.query_map([&to], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        self.db.execute(&format!("UPDATE sent_receipts SET stage='expired',updated_at=?2 WHERE id IN (SELECT id {unread}) AND stage NOT IN ('handed_to_agent','replied')"),params![to,crate::util::now_ms()])?;
         self.db.execute(&format!("DELETE {unread}"), [&to])?;
+        self.db.execute("DELETE FROM sessions WHERE name = ?1", [name])?;
+        transaction.commit()?;
         for kept in cols.iter().filter_map(|c| serde_json::from_str::<Kept>(c).ok()) {
             if let Some(dir) = self.dir(&kept) {
                 let _ = std::fs::remove_dir_all(dir);
             }
         }
-        self.db.execute("DELETE FROM sessions WHERE name = ?1", [name])?;
         Ok(())
     }
 
@@ -576,6 +727,33 @@ impl Store {
         let mut st = self.db.prepare_cached(&format!("SELECT {SESSION_COLS} FROM sessions ORDER BY name"))?;
         let rows = st.query_map([], remembered)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn remember_native_app(&self, key: &str, hook_at: Option<i64>, dirs: &[String]) -> Result<()> {
+        self.db.execute(
+            "UPDATE sessions SET native_app=?2,native_hook_at=?3,native_dirs=?4 WHERE key=?1 AND agent='antigravity'",
+            params![key, hook_at.is_some(), hook_at, serde_json::to_string(dirs)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn native_app_roots(&self, key: &str) -> Result<Option<Vec<String>>> {
+        let roots: Option<String> = self
+            .db
+            .query_row(
+                "SELECT native_dirs FROM sessions WHERE key=?1 AND agent='antigravity' AND native_app=1",
+                [key],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(roots.map(|value| serde_json::from_str::<Vec<String>>(&value)).transpose()?.filter(|dirs| !dirs.is_empty()))
+    }
+
+    pub fn native_app_sessions(&self, since: i64) -> Result<Vec<(Remembered, i64)>> {
+        let mut statement=self.db.prepare(&format!("SELECT {SESSION_COLS},native_hook_at FROM sessions WHERE native_app=1 AND agent='antigravity' AND last_seen>=?1 AND native_hook_at IS NOT NULL"))?;
+        Ok(statement
+            .query_map([since], |row| Ok((remembered(row)?, row.get(11)?)))?
+            .collect::<rusqlite::Result<_>>()?)
     }
 }
 
@@ -868,6 +1046,83 @@ mod tests {
             approval: None,
             files: Vec::new(),
         }
+    }
+
+    #[test]
+    fn receipts_track_remote_refusal_and_only_the_approved_matching_terminal_reply() {
+        let store = Store::open(Path::new(":memory:"), temp_inbox()).unwrap();
+        let mut outgoing = message("refused", "bob/terminal");
+        outgoing.sent_at = crate::util::now_ms();
+        store.record_sent("sender", &outgoing, "bob/terminal@laptop", "queued").unwrap();
+        store.outbox_add("peer", &outgoing).unwrap();
+        store.outbox_done("refused", false).unwrap();
+        assert_eq!(store.delivery_status("sender", &["refused".into()]).unwrap()[0]["stage"], "rejected");
+        outgoing.id = "accepted".into();
+        store.record_sent("sender", &outgoing, "bob/terminal@laptop", "queued").unwrap();
+        store.outbox_add("peer", &outgoing).unwrap();
+        store.outbox_done("accepted", true).unwrap();
+        let stage = || store.delivery_status("sender", &["accepted".into()]).unwrap()[0]["stage"].clone();
+        let mut reply = message("wrong-machine", &outgoing.from);
+        reply.from = "bob/terminal@desktop".into();
+        reply.reply_to = Some(outgoing.id.clone());
+        store.insert(&mut reply, false).unwrap();
+        assert_eq!(stage(), "accepted");
+        reply.id = "held-reply".into();
+        reply.from = "bob/terminal@laptop".into();
+        store.insert(&mut reply, true).unwrap();
+        assert_eq!(stage(), "accepted");
+        store.settle_held(&[reply.id], true).unwrap();
+        assert_eq!(stage(), "replied");
+        assert_eq!(store.delivery_status("other-session", &["accepted".into()]).unwrap()[0]["stage"], "unknown");
+    }
+
+    #[test]
+    fn an_expired_idempotency_key_gets_a_new_generation() {
+        let store = Store::open(Path::new(":memory:"), temp_inbox()).unwrap();
+        let now = crate::util::now_ms();
+        let (first, _) = store.begin_send("key", "original", now).unwrap();
+        assert!(!first.is_empty());
+        assert_eq!(store.begin_send("key", "original", now + 1000).unwrap().0, first);
+        assert!(store.begin_send("key", "different", now + 1000).is_err());
+        let (next, receipt) = store.begin_send("key", "different", now + 8 * 86_400_000).unwrap();
+        assert_ne!(next, first);
+        assert!(receipt.is_none());
+    }
+
+    #[test]
+    fn discarded_queues_and_retention_do_not_remain_pending() {
+        let store = Store::open(Path::new(":memory:"), temp_inbox()).unwrap();
+        let now = crate::util::now_ms();
+        let mut pending = message("pending", "sven/recipient");
+        pending.sent_at = now;
+        store.record_sent("sender", &pending, "sven/recipient", "queued").unwrap();
+        store.insert(&mut pending, false).unwrap();
+        let recipient = Remembered {
+            name: "recipient".into(),
+            key: "agent:recipient".into(),
+            agent: "agent".into(),
+            cwd: "/work".into(),
+            repo: None,
+            branch: None,
+            doing: None,
+            tier: Tier::Pull,
+            last_seen: now - 2 * 86_400_000,
+            attached: true,
+            mailbox: false,
+        };
+        store.upsert_session(&recipient, "sven").unwrap();
+        store.forget_session(&recipient, "sven").unwrap();
+        assert!(store.message("pending").unwrap().is_none());
+        assert_eq!(store.delivery_status("sender", &["pending".into()]).unwrap()[0]["stage"], "expired");
+        pending.id = "old".into();
+        pending.sent_at = now - 8 * 86_400_000;
+        store.record_sent("sender", &pending, "sven/recipient", "queued").unwrap();
+        assert_eq!(store.delivery_status("sender", &["old".into()]).unwrap()[0]["stage"], "unknown");
+        assert!(store.db.prepare("SELECT 1 FROM sent_receipts WHERE id='old'").unwrap().exists([]).unwrap());
+        store.begin_send("old-key", "body", now - 8 * 86_400_000).unwrap();
+        store.sweep_files(now).unwrap();
+        assert!(!store.db.prepare("SELECT 1 FROM sent_receipts WHERE id='old'").unwrap().exists([]).unwrap());
+        assert!(!store.db.prepare("SELECT 1 FROM send_keys WHERE key='old-key'").unwrap().exists([]).unwrap());
     }
 
     #[test]
