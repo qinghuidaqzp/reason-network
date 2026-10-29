@@ -57,6 +57,8 @@ pub struct SessionReg {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookCall {
+    #[serde(default)]
+    pub through_reason: Option<bool>,
     pub agent: String,
     /// `start`, `prompt`, `tool`, `stop`, `end`, or `doing` (only reports what the session is doing).
     pub event: String,
@@ -110,6 +112,9 @@ pub enum Request {
     },
     /// From an agent session: its key (or, for agents that reply through the CLI, its address or name).
     Send {
+        /// Local analytics only; never included in the peer message.
+        #[serde(default, deserialize_with = "crate::usage::purpose")]
+        purpose: Option<String>,
         from: String,
         to: String,
         body: String,
@@ -201,6 +206,8 @@ pub enum Request {
         hours: u64,
     },
     Team,
+    /// Local aggregate counters, read only by clients that opt into usage reporting.
+    Usage,
     /// The team link, which anyone can use to join; `new` replaces it.
     Link {
         #[serde(default)]
