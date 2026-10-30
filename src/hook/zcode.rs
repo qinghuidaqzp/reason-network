@@ -1,9 +1,26 @@
-//! ZCode has no hook-output acceptance callback. Only lease mail here, never acknowledge stdout as delivery.
+//! ZCode has no hook-output acceptance callback. Lease mail with one retry; explicit inbox reads recover it.
 use super::*;
 use crate::render;
 
 const LIMIT: Duration = Duration::from_millis(1500);
 pub(crate) const OUTPUT_LIMIT: usize = 24 * 1024;
+
+pub(crate) fn output_limit() -> usize {
+    let path = crate::paths::user_home().join(".zcode/cli/config.json");
+    match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice::<Value>(&bytes).ok().map_or(0, |v| {
+            v.pointer("/hooks/maxOutputBytes")
+                .map_or(OUTPUT_LIMIT, |n| n.as_u64().map_or(0, |n| n.min(OUTPUT_LIMIT as u64) as usize))
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => OUTPUT_LIMIT,
+        Err(_) => 0,
+    }
+}
+
+fn fits(text: &str, limit: usize) -> bool {
+    // Include the newline written by the subprocess, not just the JSON itself.
+    format_for("zcode", "post-tool-use", "tool", text).len() < limit
+}
 
 /// The process executor has no `env` field. Re-exec only this fixed hook with its configured state directory.
 pub(crate) async fn at_home(event: &str, home: std::path::PathBuf) {
@@ -59,7 +76,7 @@ fn payload(event: &str, input: &str) -> Option<HookCall> {
         return None;
     }
     Some(HookCall {
-        through_reason: None,
+        through_reason: Some(false),
         agent: "zcode".into(),
         event: if event == "session-start" { "start" } else { "tool" }.into(),
         session_id: field("session_id", "sessionId")?,
@@ -86,27 +103,44 @@ async fn handle(link: &std::sync::Arc<Link>, event: &str, input: &str) -> Option
     let text = match reply.text {
         Some(text) => text,
         None if event == "session-start" => format!(
-            "Reason Network: you are {}. Messages arrive after tools while you work. Reply with send_message and the incoming id as reply_to; that confirms receipt, not task completion. check_inbox also recovers pending messages. Idle sessions are not woken.",
+            "Reason Network: you are {}. Messages arrive after successful tools while you work, with at most one retry. Use check_inbox to recover pending or oversized messages. Reply only when needed, using the incoming id as reply_to. Idle sessions are not woken.",
             reply.address?
         ),
         _ => return None,
     };
     let out = format_for("zcode", event, if event == "session-start" { "start" } else { "tool" }, &text);
-    (out.len() <= OUTPUT_LIMIT).then_some(out)
+    (out.len() < output_limit()).then_some(out)
 }
 
-/// Keep complete JSON below the host's 32 KiB stdout cap, including Windows ASCII escaping.
-pub(crate) fn batch(messages: Vec<Message>) -> Vec<Message> {
+/// The first oversized message holds later messages for check_inbox, even while its reminder is leased.
+pub(crate) fn before_oversized(mut messages: Vec<Message>, limit: usize) -> Vec<Message> {
+    if let Some(at) =
+        messages.iter().position(|m| !fits(&render::for_agent(std::slice::from_ref(m), Some("zcode"), false), limit))
+    {
+        messages.truncate(at + 1);
+    }
+    messages
+}
+
+/// Return complete framed messages, or a small recovery notice for an oversized head of the queue.
+pub(crate) fn batch(messages: Vec<Message>, limit: usize) -> (Vec<String>, Option<String>) {
     let mut selected = Vec::new();
     for message in messages {
         selected.push(message);
         let text = render::for_agent(&selected, Some("zcode"), false);
-        if format_for("zcode", "post-tool-use", "tool", &text).len() > OUTPUT_LIMIT {
-            selected.pop();
-            continue; // Oversized messages remain unread and available through check_inbox.
+        if !fits(&text, limit) {
+            let oversized = selected.pop().expect("just added");
+            if selected.is_empty() {
+                let notice =
+                    "Reason Network: unread messages exceed this hook's output limit. Use check_inbox to read them.";
+                return if fits(notice, limit) { (vec![oversized.id], Some(notice.into())) } else { (vec![], None) };
+            }
+            break;
         }
     }
-    selected
+    let ids = selected.iter().map(|m| m.id.clone()).collect();
+    let text = (!selected.is_empty()).then(|| render::for_agent(&selected, Some("zcode"), false));
+    (ids, text)
 }
 
 #[cfg(test)]
@@ -126,6 +160,7 @@ mod tests {
         assert_eq!(a.cwd.as_deref(), Some(r"C:\用户 空格"));
         assert!(!a.mail);
         assert!(b.mail);
+        assert_eq!(a.through_reason, Some(false));
         for bad in [
             "{}",
             "{",
@@ -167,15 +202,19 @@ mod tests {
             approval: None,
             files: Vec::new(),
         };
-        let selected = batch(vec![
-            message("big", "中".repeat(64 * 1024)),
-            message("one", "你好".into()),
-            message("two", "hello".into()),
-        ]);
-        assert_eq!(selected.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["one", "two"]);
-        let out = format_for("zcode", "post-tool-use", "tool", &render::for_agent(&selected, Some("zcode"), false));
-        assert!(out.len() <= OUTPUT_LIMIT);
+        let messages =
+            vec![message("big", "中".repeat(64 * 1024)), message("one", "你好".into()), message("two", "hello".into())];
+        let (ids, text) = batch(before_oversized(messages, 512), 512);
+        assert_eq!(ids, ["big"]);
+        let text = text.unwrap();
+        assert!(text.contains("check_inbox"));
+        assert!(!text.contains("hello"));
+        assert!(fits(&text, 512));
+        let (ids, text) = batch(vec![message("one", "你好".into())], OUTPUT_LIMIT);
+        assert_eq!(ids, ["one"]);
+        let out = format_for("zcode", "post-tool-use", "tool", &text.unwrap());
         let v: Value = serde_json::from_str(&out).unwrap();
         assert!(v["hookSpecificOutput"]["additionalContext"].as_str().unwrap().contains("你好"));
+        assert_eq!(batch(vec![message("one", "hello".into())], 1), (vec![], None));
     }
 }

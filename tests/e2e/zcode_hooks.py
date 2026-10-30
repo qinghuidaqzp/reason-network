@@ -29,7 +29,8 @@ STATE = DIR / "network state"
 ENV = {k: v for k, v in os.environ.items() if not k.startswith(("CLAUDE", "CODEX", "GROK", "REASON_", "TINCAN_"))}
 ENV.update(HOME=str(HOME), USERPROFILE=str(HOME), APPDATA=str(HOME / "AppData/Roaming"),
            LOCALAPPDATA=str(HOME / "AppData/Local"), PATH="", REASON_NETWORK_HOME=str(STATE),
-           REASON_NETWORK_NO_MDNS="1", REASON_NETWORK_NO_SERVICE="1", REASON_NETWORK_MACHINE="zcode-test")
+           REASON_NETWORK_NO_MDNS="1", REASON_NETWORK_NO_SERVICE="1", REASON_NETWORK_NO_UPDATE="1",
+           REASON_NETWORK_NO_TRAY="1", REASON_NETWORK_MACHINE="zcode-test")
 RESULTS = []
 
 
@@ -75,8 +76,10 @@ class Mcp:
                 return answer["result"]
 
     def tool_result(self, name, arguments=None, session="one", workspace=DIR):
-        return self.request("tools/call", {"name": name, "arguments": arguments or {},
-                              "_meta": {"com.zcode/request-context": {"session_id": session, "workspace_path": str(workspace)}}})
+        params = {"name": name, "arguments": arguments or {}}
+        if session is not None:
+            params["_meta"] = {"com.zcode/request-context": {"session_id": session, "workspace_path": str(workspace)}}
+        return self.request("tools/call", params)
 
     def tool(self, name, arguments=None, session="one", workspace=DIR):
         result = self.tool_result(name, arguments, session, workspace)
@@ -125,6 +128,9 @@ try:
     run("who")
     recovered = hook()
     check("unaccepted output survives daemon restart", "unique-one" in recovered and "unique-two" in recovered and unread() == 2)
+    run("stop")
+    run("who")
+    check("second restart does not reset the single-retry limit", hook() == "" and unread() == 2)
     client = Mcp()
     listing = client.tool("list_team")
     check("MCP attaches to the exact hook session", address.split("/", 1)[1] in listing and "← you" in listing)
@@ -146,6 +152,31 @@ try:
     receipts = json.loads(client.tool("message_status", {"ids": ids}))
     check("ZCode can query its outgoing delivery receipt", len(receipts) == 1 and receipts[0]["id"] == ids[0]
           and receipts[0]["stage"] in ("queued", "accepted", "handed_to_agent"))
+    sent = client.tool("send_message", {"to": address, "message": "recipient-receipt"}, session="sender")
+    incoming_ids = [line.split()[-1] for line in sent.splitlines() if line.startswith("message id ")]
+    check("hook stdout alone does not report agent handoff",
+          "recipient-receipt" in hook() and json.loads(client.tool("message_status", {"ids": incoming_ids}, session="sender"))[0]["stage"] == "queued")
+    client.tool("check_inbox")
+    check("ZCode inbox read after a hook records agent handoff",
+          json.loads(client.tool("message_status", {"ids": incoming_ids}, session="sender"))[0]["stage"] == "handed_to_agent")
+    check("legacy list_team works without request metadata", "you" in client.tool("list_team", session=None))
+    check("legacy send works without request metadata", "message id" in client.tool("send_message", {"to":"alex/terminal", "message":"legacy"}, session=None))
+    run("send", address, "not-for-legacy-process")
+    check("legacy inbox cannot consume a metadata session's mail", "not-for-legacy-process" not in client.tool("check_inbox", session=None) and unread() == 1)
+    client.tool("check_inbox")
+    partial = client.request("tools/call", {"name":"list_team", "arguments":{}, "_meta":{"com.zcode/request-context":{"session_id":"one"}}})
+    check("incomplete metadata does not silently fall back to another workspace", partial.get("isError") is True)
+    run("send", address, "ack-bookkeeping-failure")
+    pending = json.loads(hook())["hookSpecificOutput"]["additionalContext"]
+    pending_id = pending.split(' id="', 1)[1].split('"', 1)[0]
+    with sqlite3.connect(STATE / "network.db") as db:
+        db.execute("CREATE TRIGGER fail_ack BEFORE UPDATE OF read_at ON messages BEGIN SELECT RAISE(FAIL, 'test bookkeeping failure'); END")
+    try:
+        check("ack bookkeeping failure does not fail an already stored send", "message id" in client.tool("send_message", {"to":"alex/terminal", "message":"still stored", "reply_to":pending_id}))
+    finally:
+        with sqlite3.connect(STATE / "network.db") as db:
+            db.execute("DROP TRIGGER fail_ack")
+    client.tool("check_inbox")
     started = time.monotonic()
     client.tool("check_inbox", {"wait_secs": 60})
     check("ZCode inbox waits are bounded below 30 seconds", time.monotonic() - started < 8)
@@ -166,6 +197,28 @@ try:
     check("message recovers after timeout and restart", "recover-after-timeout" in hook() and unread() == 1)
     client.tool("check_inbox")
     check("recovered message can be acknowledged normally", unread() == 0)
+    # Hook output obeys user config. Later messages must not silently overtake an oversized head.
+    native = HOME / ".zcode/cli/config.json"
+    native.write_text(json.dumps({"hooks":{"enabled":True,"maxOutputBytes":512}}), encoding="utf-8")
+    run("send", address, "-", data="大" * 9000)
+    run("send", address, "later-small-message")
+    small = hook()
+    check("lowered maxOutputBytes emits bounded inbox recovery context", len(small.encode("utf-8")) <= 512 and "check_inbox" in small and "later-small-message" not in small)
+    check("a leased oversized message still prevents later hook mail overtaking it", hook() == "" and unread() == 2)
+    run("stop")
+    run("who")
+    check("oversized recovery notice gets only one retry", "check_inbox" in hook())
+    run("stop")
+    run("who")
+    check("oversized recovery retry bound persists", hook() == "" and unread() == 2)
+    recovered = client.tool("check_inbox")
+    check("explicit inbox recovers oversized and later mail in order", recovered.index("大" * 10) < recovered.index("later-small-message") and unread() == 0)
+    native.write_text(json.dumps({"hooks":{"enabled":True,"maxOutputBytes":1}}), encoding="utf-8")
+    run("send", address, "below-json-minimum")
+    check("a cap below JSON overhead neither truncates output nor consumes an attempt", hook() == "" and unread() == 1)
+    native.write_text("{}", encoding="utf-8")
+    check("mail remains injectable after restoring output budget", "below-json-minimum" in hook())
+    client.tool("check_inbox")
     private = DIR / "private workspace"
     private.mkdir()
     run("folder", str(private), "off")
@@ -181,6 +234,19 @@ try:
     check("files resolve relative to the calling ZCode workspace", "message id" in sent)
     denied = client.tool_result("send_message", {"to":"alex/terminal","message":"no escape","files":[str(outside)]}, session="files", workspace=own)
     check("files cannot escape the calling ZCode workspace", denied.get("isError") is True)
+    # Installation still works when hooks are absent, disabled or from a newer host schema.
+    for bad_hooks in [None, {"enabled":False}, {"events":{"PostToolUse":[{"unexpected":"shape"}]}},
+                      {"enabled":True,"events":{"PostToolUse":[None,{"hooks":"unknown"}]}}]:
+        native.write_text(json.dumps({"provider":"keep", "hooks":bad_hooks}), encoding="utf-8")
+        run("setup", "--no-service")
+        installed = json.loads(native.read_text(encoding="utf-8"))
+        check("MCP install succeeds with optional hooks " + repr(bad_hooks),
+              installed["mcp"]["servers"]["reason-network"]["command"] == str(BIN)
+              and installed["hooks"] == bad_hooks and installed["provider"] == "keep")
+        run("setup", "--remove", "--no-service")
+        removed = json.loads(native.read_text(encoding="utf-8"))
+        check("MCP removal preserves optional hooks " + repr(bad_hooks),
+              "reason-network" not in removed["mcp"]["servers"] and removed["hooks"] == bad_hooks)
     client.close()
     client = None
     print(f"{len(RESULTS)} checks passed; isolated fixtures: {DIR}")

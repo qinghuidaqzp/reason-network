@@ -233,7 +233,7 @@ impl ReasonNetworkMcp {
         let notify = a.notify.unwrap_or(false);
         let paths = a.files.unwrap_or_default();
         let files = match if self.agent(&ctx.peer, Some(&ctx.meta)) == "zcode" {
-            let (_, cwd) = agent::zcode_context(&ctx.meta).expect("session_for checked the context");
+            let cwd = agent::zcode_context(&ctx.meta).map_or_else(agent::cwd, |(_, cwd)| cwd);
             agent_files_in(&paths, &cwd)
         } else {
             agent_files(&paths)
@@ -393,9 +393,17 @@ impl ReasonNetworkMcp {
         }
         if agent == "zcode" {
             // Never guess between two conversations sharing a workspace or inherit another agent's session id.
-            let (id, cwd) = agent::zcode_context(&ctx.meta)
-                .ok_or_else(|| anyhow::anyhow!("ZCode MCP call is missing session_id/workspace_path metadata"))?;
-            return self.register_session(agent, Some(id), cwd).await;
+            if let Some((id, cwd)) = agent::zcode_context(&ctx.meta) {
+                return self.register_session(agent, Some(id), cwd).await;
+            }
+            // Older clients have no per-call metadata. Keep their process mailbox; never attach them to another chat.
+            if ctx.meta.contains_key("com.zcode/request-context")
+                || ctx.meta.contains_key("workspace_path")
+                || ctx.meta.contains_key("session_id")
+            {
+                anyhow::bail!("ZCode MCP call has incomplete session_id/workspace_path metadata");
+            }
+            return self.register_session(agent, None, agent::cwd()).await;
         }
         self.session(agent, agent::meta_session_id(&ctx.meta)).await
     }

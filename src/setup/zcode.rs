@@ -11,7 +11,7 @@ fn hook_entry(exe: &Path, event: &str, state: Option<&str>) -> Value {
     if let Some(state) = state {
         args.extend(["--network-home", state]);
     }
-    json!({"type":"process", "command":exe, "args":args, "timeoutMs":3000, "statusMessage":HOOK_MARKER})
+    json!({"type":"process", "command":exe.display().to_string(), "args":args, "timeoutMs":3000, "statusMessage":HOOK_MARKER})
 }
 
 fn our_hook(entry: &Value) -> bool {
@@ -28,6 +28,9 @@ fn our_hook(entry: &Value) -> bool {
 }
 
 fn merge_hooks(value: &mut Value, exe: &Path, remove: bool, state: Option<&str>) -> Result<()> {
+    if !remove && exe.to_str().is_none() {
+        return Err(anyhow!("ZCode process hooks need a UTF-8 executable path; hooks left unchanged"));
+    }
     let root = obj(value)?;
     if remove && !root.contains_key("hooks") {
         return Ok(());
@@ -37,51 +40,86 @@ fn merge_hooks(value: &mut Value, exe: &Path, remove: bool, state: Option<&str>)
     if hooks.get("enabled").is_some_and(|v| !v.is_boolean()) {
         return Err(anyhow!("ZCode hooks.enabled is not a boolean; not touching it"));
     }
-    let enabled = hooks.get("enabled") == Some(&json!(true));
+    let disabled = hooks.get("enabled") == Some(&json!(false));
+    let unset = !hooks.contains_key("enabled");
+    if !remove && disabled && hooks.get("events").is_none_or(|e| e.as_object().is_some_and(|e| e.is_empty())) {
+        return Ok(());
+    }
     if remove && !hooks.contains_key("events") {
         return Ok(());
     }
     let events = hooks.entry("events").or_insert_with(|| json!({}));
     let events =
         events.as_object_mut().ok_or_else(|| anyhow!("ZCode hooks.events is not an object; not touching it"))?;
-    // Enabling the global switch must not silently activate the user's disabled hooks.
-    if !remove && !enabled && events.values().any(|v| v.as_array().is_none_or(|a| !a.is_empty())) {
-        return Err(anyhow!("ZCode has disabled user hooks; enable them explicitly before installing Reason hooks"));
+    // A missing switch with pre-existing hooks is disabled too. Never enable those implicitly.
+    if !remove && unset && events.values().any(|v| v.as_array().is_none_or(|a| !a.is_empty())) {
+        return Err(anyhow!("ZCode user hooks are not enabled; hooks left unchanged"));
     }
     let mut empty = Vec::new();
+    let mut removed_any = false;
     for (name, groups) in events.iter_mut() {
-        let groups = groups.as_array_mut().ok_or_else(|| anyhow!("ZCode hook event is not an array"))?;
-        for group in groups.iter() {
-            if group.get("hooks").and_then(Value::as_array).is_none() {
+        let Some(groups) = groups.as_array_mut() else {
+            if remove {
+                continue;
+            }
+            return Err(anyhow!("ZCode hook event is not an array; hooks left unchanged"));
+        };
+        if !remove {
+            if groups.iter().any(|g| g.get("hooks").and_then(Value::as_array).is_none()) {
                 return Err(anyhow!("ZCode hook group has no hooks array"));
             }
+            continue;
         }
         let mut removed = false;
         groups.retain_mut(|group| {
-            let list = group.get_mut("hooks").and_then(Value::as_array_mut).expect("validated above");
+            let Some(list) = group.get_mut("hooks").and_then(Value::as_array_mut) else { return true };
             let before = list.len();
             list.retain(|h| !our_hook(h));
             let changed = before != list.len();
             removed |= changed;
-            !changed || !list.is_empty()
+            !changed || !list.is_empty() || group.as_object().is_none_or(|o| o.len() != 1)
         });
         if removed && groups.is_empty() {
             empty.push(name.clone());
         }
+        removed_any |= removed;
     }
     for name in empty {
         events.remove(&name);
     }
     if !remove {
         for (name, event) in [("SessionStart", "session-start"), ("PostToolUse", "post-tool-use")] {
-            events
-                .entry(name)
-                .or_insert_with(|| json!([]))
-                .as_array_mut()
-                .unwrap()
-                .push(json!({"hooks":[hook_entry(exe, event, state)]}));
+            let replacement = hook_entry(exe, event, state);
+            let mut found = false;
+            if let Some(groups) = events.get_mut(name).and_then(Value::as_array_mut) {
+                for group in groups {
+                    for entry in group["hooks"].as_array_mut().expect("validated above") {
+                        if our_hook(entry) {
+                            // Preserve enabled:false and any other user customizations on our declaration.
+                            entry["command"] = replacement["command"].clone();
+                            entry["args"] = replacement["args"].clone();
+                            found = true;
+                        }
+                    }
+                }
+            }
+            if !found && !disabled {
+                events
+                    .entry(name)
+                    .or_insert_with(|| json!([]))
+                    .as_array_mut()
+                    .expect("validated above")
+                    .push(json!({"hooks":[replacement]}));
+            }
         }
-        hooks.insert("enabled".into(), json!(true));
+        if !disabled {
+            hooks.insert("enabled".into(), json!(true));
+        }
+    } else if removed_any && events.is_empty() {
+        hooks.remove("events");
+        if hooks.is_empty() || (hooks.len() == 1 && hooks.get("enabled") == Some(&json!(true))) {
+            root.remove("hooks");
+        }
     }
     Ok(())
 }
@@ -92,7 +130,7 @@ pub(super) fn installed() -> bool {
 }
 
 pub(super) fn wired(exe: &Path) -> bool {
-    wired_in(&home(), exe) && hooks_wired(&home(), exe)
+    wired_in(&home(), exe)
 }
 
 fn hooks_wired(home: &Path, exe: &Path) -> bool {
@@ -102,7 +140,11 @@ fn hooks_wired(home: &Path, exe: &Path) -> bool {
                 v["hooks"]["events"][event].as_array().is_some_and(|groups| {
                     groups.iter().any(|g| {
                         g["hooks"].as_array().is_some_and(|a| {
-                            a.iter().any(|h| our_hook(h) && h["command"].as_str().is_some_and(|c| same_path(c, exe)))
+                            a.iter().any(|h| {
+                                our_hook(h)
+                                    && h["enabled"] != false
+                                    && h["command"].as_str().is_some_and(|c| same_path(c, exe))
+                            })
                         })
                     })
                 })
@@ -147,7 +189,10 @@ fn apply_in(home: &Path, exe: &Path, remove: bool, dry: bool) -> Result<Report> 
     let state = crate::paths::env_var("HOME").ok();
     let mut hooks = read_json(&native.0)?;
     let original = hooks.clone();
-    merge_hooks(&mut hooks, exe, remove, state.as_deref())?;
+    if let Err(e) = merge_hooks(&mut hooks, exe, remove, state.as_deref()) {
+        hooks = original.clone();
+        r.notes.push(format!("MCP setup continues; {e}"));
+    }
     // Our own entry doesn't count: ZCode should go on reading `.agents` when ours is all its own file has.
     let to_fallback = !remove
         && !servers(&mut read_json(&native.0)?, true)?.keys().any(|k| k != AGENT_NAME)
@@ -165,11 +210,13 @@ fn apply_in(home: &Path, exe: &Path, remove: bool, dry: bool) -> Result<Report> 
     for (path, native) in targets {
         let mut v = read_json(&path)?;
         let servers = servers(&mut v, native)?;
+        let mut hooks_only = false;
         if remove || (native && to_fallback) {
             let removed = servers.remove(AGENT_NAME).is_some();
             if !removed && !(native && original != hooks) {
                 continue;
             }
+            hooks_only = !removed;
         } else {
             servers.insert(
                 AGENT_NAME.into(),
@@ -182,18 +229,35 @@ fn apply_in(home: &Path, exe: &Path, remove: bool, dry: bool) -> Result<Report> 
         if native {
             if let Some(value) = hooks.get("hooks") {
                 v["hooks"] = value.clone();
+            } else {
+                obj(&mut v)?.remove("hooks");
             }
             hooks_written = true;
         }
-        r.lines.push(changed(&path, write_json(&path, &v, dry)?));
+        match write_json(&path, &v, dry) {
+            Ok(written) => r.lines.push(changed(&path, written)),
+            Err(e) if hooks_only => {
+                r.notes.push(format!("MCP setup completed; could not write optional ZCode hooks: {e}"))
+            }
+            Err(e) => return Err(e),
+        }
     }
     if !hooks_written && original != hooks {
-        r.lines.push(changed(&files(home)[0].0, write_json(&files(home)[0].0, &hooks, dry)?));
+        match write_json(&files(home)[0].0, &hooks, dry) {
+            Ok(written) => r.lines.push(changed(&files(home)[0].0, written)),
+            Err(e) => r.notes.push(format!("MCP setup completed; could not write optional ZCode hooks: {e}")),
+        }
     }
     if r.lines.is_empty() {
         r.lines.push("no MCP server to remove".into());
     } else if !remove {
-        r.notes.push("Start a new ZCode session to load SessionStart/PostToolUse hooks; inbox recovery remains available. No idle wake-up.".into());
+        if !dry && !hooks_wired(home, exe) {
+            r.notes.push(
+                "MCP is installed; hooks are disabled or unavailable. Use check_inbox to receive messages.".into(),
+            );
+        } else {
+            r.notes.push("Start a new ZCode session to load SessionStart/PostToolUse hooks; inbox recovery remains available. No idle wake-up.".into());
+        }
     }
     Ok(r)
 }
@@ -235,6 +299,7 @@ mod tests {
         // By name, wherever the binary is now.
         apply_in(&h, Path::new("/elsewhere/reason-network"), true, false).unwrap();
         assert_eq!(read(&native)["mcp"]["servers"], json!({"memory": {"command": "npx"}}));
+        assert!(read(&native).get("hooks").is_none());
         std::fs::remove_dir_all(h).unwrap();
     }
 
@@ -337,19 +402,102 @@ mod tests {
     }
 
     #[test]
-    fn disabled_or_invalid_user_hooks_block_install_before_any_write() {
+    fn disabled_or_invalid_hooks_never_block_mcp_install_update_or_removal() {
         let h = scratch();
         let native = files(&h)[0].0.clone();
         for hooks in [
             json!(null),
             json!({"events":[]}),
+            json!({"enabled":false}),
+            json!({"enabled":false,"events":{}}),
+            json!({"events":{"PostToolUse":[{"hooks":[{"command":"user-hook"}]}]}}),
+            json!({"enabled":true,"events":{"PostToolUse":[{"unexpected":"shape"}]}}),
             json!({"enabled":false,"events":{"Stop":[
             {"hooks":[{"type":"process","command":"user-hook"}]}]}}),
         ] {
             let text = json!({"provider":"keep","hooks":hooks}).to_string();
             put(&native, &text);
-            assert!(apply_in(&h, Path::new("/opt/reason-network"), false, false).is_err());
-            assert_eq!(std::fs::read_to_string(&native).unwrap(), text);
+            for exe in ["/opt/reason-network", "/moved/reason-network"] {
+                apply_in(&h, Path::new(exe), false, false).unwrap();
+                assert_eq!(read(&native)["hooks"], hooks);
+                assert_eq!(read(&native)["provider"], "keep");
+                assert!(wired_in(&h, Path::new(exe)));
+                assert!(!hooks_wired(&h, Path::new(exe)));
+            }
+            apply_in(&h, Path::new("/moved/reason-network"), true, false).unwrap();
+            assert_eq!(read(&native)["hooks"], hooks);
+            assert!(read(&native)["mcp"]["servers"].as_object().unwrap().is_empty());
+        }
+        std::fs::remove_dir_all(h).unwrap();
+    }
+
+    #[test]
+    fn removal_keeps_odd_user_groups_and_updates_keep_disabled_declarations() {
+        let h = scratch();
+        let native = files(&h)[0].0.clone();
+        let old = Path::new("/old/reason-network");
+        let new = Path::new("/new/reason-network");
+        apply_in(&h, old, false, false).unwrap();
+        let mut v = read(&native);
+        v["hooks"]["events"]["PostToolUse"][0]["hooks"][0]["enabled"] = json!(false);
+        put(&native, &v.to_string());
+        apply_in(&h, new, false, false).unwrap();
+        assert!(wired_in(&h, new));
+        assert!(!hooks_wired(&h, new));
+        let mut v = read(&native);
+        assert_eq!(v["hooks"]["events"]["PostToolUse"][0]["hooks"][0]["enabled"], false);
+        assert_eq!(v["hooks"]["events"]["PostToolUse"][0]["hooks"][0]["command"], new.to_str().unwrap());
+        v["hooks"]["enabled"] = json!(false);
+        put(&native, &v.to_string());
+        apply_in(&h, old, false, false).unwrap();
+        assert!(wired_in(&h, old));
+        assert_eq!(read(&native)["hooks"]["enabled"], false);
+        let mut v = read(&native);
+        v["hooks"]["events"]["Stop"] = json!([null, {"unexpected": "keep"}, {"hooks":"keep"}]);
+        v["hooks"]["events"]["Unknown"] = json!({"keep":true});
+        put(&native, &v.to_string());
+        apply_in(&h, new, true, false).unwrap();
+        let after = read(&native);
+        assert!(after["mcp"]["servers"].as_object().unwrap().is_empty());
+        assert_eq!(after["hooks"]["events"]["Stop"], v["hooks"]["events"]["Stop"]);
+        assert_eq!(after["hooks"]["events"]["Unknown"], v["hooks"]["events"]["Unknown"]);
+        assert!(after["hooks"]["events"].get("SessionStart").is_none());
+        assert!(after["hooks"]["events"].get("PostToolUse").is_none());
+        assert_eq!(after["hooks"]["enabled"], false);
+        std::fs::remove_dir_all(h).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_non_utf8_executable_does_not_panic_or_block_mcp() {
+        use std::os::unix::ffi::OsStringExt;
+        let h = scratch();
+        let exe = PathBuf::from(std::ffi::OsString::from_vec(b"/opt/\xff/reason-network".to_vec()));
+        let r = apply_in(&h, &exe, false, false).unwrap();
+        assert!(r.notes.iter().any(|s| s.contains("UTF-8")));
+        assert!(read(&files(&h)[0].0)["mcp"]["servers"][AGENT_NAME].is_object());
+        assert!(read(&files(&h)[0].0).get("hooks").is_none());
+        std::fs::remove_dir_all(h).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn optional_hook_write_failure_does_not_block_the_fallback_mcp() {
+        use std::os::unix::fs::PermissionsExt;
+        let h = scratch();
+        let [(native, _), (fallback, _)] = files(&h);
+        put(&native, r#"{"provider":"keep"}"#);
+        put(&fallback, r#"{"mcpServers":{"other":{"command":"keep"}}}"#);
+        let parent = native.parent().unwrap();
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let checked = std::fs::write(parent.join("probe"), "").is_err();
+        let result = apply_in(&h, Path::new("/opt/reason-network"), false, false);
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let report = result.unwrap();
+        assert!(read(&fallback)["mcpServers"][AGENT_NAME].is_object());
+        if checked {
+            assert!(report.notes.iter().any(|s| s.contains("could not write optional")));
+            assert_eq!(std::fs::read_to_string(&native).unwrap(), r#"{"provider":"keep"}"#);
         }
         std::fs::remove_dir_all(h).unwrap();
     }

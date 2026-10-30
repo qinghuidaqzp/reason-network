@@ -294,6 +294,9 @@ impl Store {
             // Empty preserves the identity derivation of an unfinished send from an earlier engine. New keys get a nonce.
             db.execute("ALTER TABLE send_keys ADD COLUMN nonce TEXT NOT NULL DEFAULT ''", [])?;
         }
+        if !db.prepare("SELECT 1 FROM pragma_table_info('messages') WHERE name='zcode_hook_attempts'")?.exists([])? {
+            db.execute("ALTER TABLE messages ADD COLUMN zcode_hook_attempts INTEGER NOT NULL DEFAULT 0", [])?;
+        }
         Ok(Store { db, inbox })
     }
 
@@ -383,16 +386,41 @@ impl Store {
     }
 
     /// Confirmation of receipt only: a ZCode reply must correlate to mail sent to this exact session by its target.
-    pub fn ack_zcode_reply(&self, reply: &Message) -> Result<()> {
+    pub fn ack_zcode_reply(&self, reply: &Message, shown_recipient: &str) -> Result<()> {
         if reply.from_agent.as_deref() != Some("zcode") {
             return Ok(());
         }
         if let Some(id) = &reply.reply_to {
             self.db.execute(
                 "UPDATE messages SET read_at = ?1 WHERE id = ?2 AND recipient = ?3 AND sender = ?4 AND held = 0 AND read_at IS NULL",
-                params![crate::util::now_ms(), id, reply.from, reply.to],
+                params![crate::util::now_ms(), id, reply.from, shown_recipient],
             )?;
         }
+        Ok(())
+    }
+
+    pub fn zcode_hook_available(&self, id: &str) -> Result<bool> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT zcode_hook_attempts < 2 FROM messages WHERE id=?1 AND read_at IS NULL AND held=0",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .unwrap_or(false))
+    }
+
+    /// Count before returning hook output. A lost response may use an attempt but never consumes the message.
+    pub fn lease_zcode_hook(&self, ids: &[String]) -> Result<()> {
+        let tx = self.db.unchecked_transaction()?;
+        for id in ids {
+            anyhow::ensure!(tx.execute(
+                "UPDATE messages SET zcode_hook_attempts=zcode_hook_attempts+1 WHERE id=?1 AND zcode_hook_attempts<2 AND read_at IS NULL AND held=0",
+                [id],
+            )? == 1, "ZCode hook retry limit reached");
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -978,16 +1006,16 @@ mod tests {
             Message { from_agent: Some("cursor".into()), ..reply.clone() },
             Message { reply_to: None, ..reply.clone() },
         ] {
-            store.ack_zcode_reply(&bad).unwrap();
+            store.ack_zcode_reply(&bad, &bad.to).unwrap();
             assert_eq!(store.unread_count("bob/zcode").unwrap(), 1);
         }
-        store.ack_zcode_reply(&reply).unwrap();
+        store.ack_zcode_reply(&reply, &reply.to).unwrap();
         let receipt = store
             .db
             .query_row("SELECT read_at FROM messages WHERE id = 'incoming'", [], |r| r.get::<_, i64>(0))
             .unwrap();
         store.db.execute("UPDATE messages SET read_at = 1 WHERE id = 'incoming'", []).unwrap();
-        store.ack_zcode_reply(&reply).unwrap();
+        store.ack_zcode_reply(&reply, &reply.to).unwrap();
         assert_eq!(
             store
                 .db
@@ -1000,8 +1028,53 @@ mod tests {
         assert!(store.has("incoming").unwrap(), "confirmation does not delete the message");
         let mut held = Message { id: "held".into(), ..original };
         store.insert(&mut held, true).unwrap();
-        store.ack_zcode_reply(&Message { reply_to: Some("held".into()), ..reply }).unwrap();
+        store.ack_zcode_reply(&Message { reply_to: Some("held".into()), ..reply.clone() }, &reply.to).unwrap();
         assert_eq!(store.held().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn zcode_terminal_confirmation_matches_the_exact_machine() {
+        let store = Store::open(Path::new(":memory:"), PathBuf::new()).unwrap();
+        let mut incoming = message("terminal-message", "bob/zcode");
+        incoming.from = "alice/terminal@laptop".into();
+        store.insert(&mut incoming, false).unwrap();
+        let reply = Message {
+            from: incoming.to.clone(),
+            to: "alice/terminal".into(),
+            from_agent: Some("zcode".into()),
+            reply_to: Some(incoming.id.clone()),
+            ..incoming.clone()
+        };
+        for shown in ["alice/terminal", "alice/terminal@desktop"] {
+            store.ack_zcode_reply(&reply, shown).unwrap();
+            assert_eq!(store.unread_count("bob/zcode").unwrap(), 1);
+        }
+        store.ack_zcode_reply(&reply, "alice/terminal@laptop").unwrap();
+        assert_eq!(store.unread_count("bob/zcode").unwrap(), 0);
+    }
+
+    #[test]
+    fn zcode_retry_bound_survives_reopening_and_never_marks_read() {
+        let dir = temp_inbox();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.db");
+        {
+            let store = Store::open(&path, dir.clone()).unwrap();
+            store.insert(&mut message("retry", "bob/zcode"), false).unwrap();
+            assert!(store.zcode_hook_available("retry").unwrap());
+            store.lease_zcode_hook(&["retry".into()]).unwrap();
+        }
+        {
+            let store = Store::open(&path, dir.clone()).unwrap();
+            assert!(store.zcode_hook_available("retry").unwrap());
+            store.lease_zcode_hook(&["retry".into()]).unwrap();
+            assert!(!store.zcode_hook_available("retry").unwrap());
+            assert!(store.lease_zcode_hook(&["retry".into()]).is_err());
+            assert_eq!(store.unread_count("bob/zcode").unwrap(), 1);
+            store.mark_read(&["retry".into()], 1).unwrap();
+            assert_eq!(store.unread_count("bob/zcode").unwrap(), 0);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

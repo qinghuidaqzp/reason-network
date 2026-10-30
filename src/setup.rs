@@ -1322,7 +1322,7 @@ const AGENTS: [Agent; 14] = [
     Agent {
         id: "zcode",
         name: "ZCode Desktop",
-        hint: "after tools while working; start a new session to load hooks; no idle wake-up",
+        hint: "MCP inbox, plus optional after-tool hooks; no idle wake-up",
         installed: zcode::installed,
         wired: zcode::wired,
         apply: zcode::apply,

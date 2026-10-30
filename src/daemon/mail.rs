@@ -411,7 +411,7 @@ impl Daemon {
                 res.recipients.push(Recipient { address: shown, state, note });
                 // A correlated ZCode reply confirms receipt; hook stdout alone cannot prove host acceptance.
                 if res.recipients.last().is_some_and(|r| r.state != "refused") {
-                    g.store.ack_zcode_reply(&msg)?;
+                    let _ = g.store.ack_zcode_reply(&msg, &res.recipients.last().expect("just added").address);
                 }
                 let _ = g.store.send_outcome(&msg.id, &res.recipients.last().expect("just added").state);
             }
@@ -531,6 +531,8 @@ impl Daemon {
             "queued: delivered within seconds once the session is idle"
         } else if l.reg.agent == "cli" {
             "queued: it gets it the next time it listens"
+        } else if l.reg.agent == "zcode" {
+            "queued: after its next successful tool while working, or when it checks its inbox; no end-of-turn or idle wake-up"
         } else {
             "queued: it sees it at its next tool call or when its turn ends"
         };
