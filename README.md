@@ -139,7 +139,11 @@ With the Reason CLI: `reason network leave`, then `reason network setup --remove
 cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test
 cargo build && python3 tests/e2e/two_machines.py   # two machines over iroh (needs internet)
 python3 tests/e2e/hooks.py && python3 tests/e2e/codex_busy.py && python3 tests/e2e/guided.py
+python3 tests/e2e/tray_memory.py --output /tmp/tray-memory.json  # macOS desktop; keep the test menu closed
 ```
+
+The tray memory check uses synthetic local data and writes its measurements to JSON. Separately open a test submenu,
+close it, and reopen it after several updates to verify that the menu still works; see the script's instructions.
 
 A `v*` tag builds the macOS, Linux and Windows archives and the install scripts; the Reason CLI pins the macOS and
 Linux ones.
