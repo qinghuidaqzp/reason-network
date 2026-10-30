@@ -241,7 +241,7 @@ try:
         run("setup", "--no-service")
         installed = json.loads(native.read_text(encoding="utf-8"))
         check("MCP install succeeds with optional hooks " + repr(bad_hooks),
-              installed["mcp"]["servers"]["reason-network"]["command"] == str(BIN)
+              Path(installed["mcp"]["servers"]["reason-network"]["command"]).resolve() == BIN.resolve()
               and installed["hooks"] == bad_hooks and installed["provider"] == "keep")
         run("setup", "--remove", "--no-service")
         removed = json.loads(native.read_text(encoding="utf-8"))

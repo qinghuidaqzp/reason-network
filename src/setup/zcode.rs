@@ -7,10 +7,9 @@ use super::*;
 const HOOK_MARKER: &str = "Reason Network (managed)";
 
 fn hook_entry(exe: &Path, event: &str, state: Option<&str>) -> Value {
-    let mut args = vec!["hook", "zcode", event];
-    if let Some(state) = state {
-        args.extend(["--network-home", state]);
-    }
+    // Older engines reject this flag before running a hook that would emit plain text and consume mail.
+    let state = state.map(str::to_string).unwrap_or_else(|| crate::paths::home().display().to_string());
+    let args = ["hook", "zcode", event, "--network-home", &state];
     json!({"type":"process", "command":exe.display().to_string(), "args":args, "timeoutMs":3000, "statusMessage":HOOK_MARKER})
 }
 
@@ -399,6 +398,32 @@ mod tests {
         assert_eq!(h["args"], json!(["hook", "zcode", "session-start", "--network-home", r"C:\Reason state 空格"]));
         merge_hooks(&mut v, Path::new("/new/reason-network"), true, None).unwrap();
         assert_eq!(v, original);
+    }
+
+    #[test]
+    fn every_hook_has_a_rollback_guard_including_default_and_existing_installs() {
+        let exe = Path::new("/opt/reason-network");
+        let default = crate::paths::home().display().to_string();
+        for state in [None, Some("/custom state/用户")] {
+            for event in ["session-start", "post-tool-use"] {
+                let entry = hook_entry(exe, event, state);
+                assert_eq!(entry["args"], json!(["hook", "zcode", event, "--network-home", state.unwrap_or(&default)]));
+                assert!(our_hook(&entry));
+            }
+        }
+        let mut v = json!({"hooks":{"enabled":true,"events":{
+            "PostToolUse":[{"hooks":[{"type":"process","command":"/old/reason-network",
+                "args":["hook","zcode","post-tool-use"],"statusMessage":HOOK_MARKER,"enabled":false}]}]
+        }}});
+        merge_hooks(&mut v, exe, false, None).unwrap();
+        let upgraded = &v["hooks"]["events"]["PostToolUse"][0]["hooks"][0];
+        assert_eq!(upgraded["args"], json!(["hook", "zcode", "post-tool-use", "--network-home", default]));
+        assert_eq!(upgraded["enabled"], false);
+        let once = v.clone();
+        merge_hooks(&mut v, exe, false, None).unwrap();
+        assert_eq!(v, once);
+        merge_hooks(&mut v, exe, true, None).unwrap();
+        assert!(v.get("hooks").is_none());
     }
 
     #[test]
